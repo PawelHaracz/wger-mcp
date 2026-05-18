@@ -110,6 +110,7 @@ MCP_AUTH=none
 | `attach_exercise_to_slot(slot_id, exercise_id, order?, repetition_unit?, weight_unit?, comment?)` | Attach an exercise (by numeric wger id) to a slot |
 | `set_slot_entry_config(slot_entry_id, kind, value, iteration?, operation?, step?, repeat?)` | Add per-iteration config (kind: sets, reps, weight, rir, rest, max_*) |
 | `add_exercise_with_sets(day_id, exercise_id, sets, reps, weight_kg, slot_order?, rest_seconds?)` | Convenience: slot + entry + sets/reps/weight configs in one call |
+| `delete_routine(routine_id)` / `delete_routine_day(day_id)` / `delete_slot(slot_id)` / `delete_slot_entry(slot_entry_id)` | Cascade deletes for routine subtree |
 | `list_workouts` | Legacy workout plans |
 | `search_exercises(query, language, limit)` | Find exercises by name (ISO 639-1 language code) |
 | `get_exercise(id)` | Full exercise detail: muscles, equipment, instructions |

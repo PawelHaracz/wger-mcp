@@ -159,6 +159,42 @@ def build_app(settings: Settings) -> Starlette:
             return _err(exc)
 
     @mcp.tool()
+    async def delete_routine(routine_id: int) -> dict[str, Any]:
+        """Delete a routine and its entire day/slot/entry tree."""
+        try:
+            await client.delete(f"routine/{routine_id}/")
+            return {"deleted": True, "routine_id": routine_id}
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def delete_routine_day(day_id: int) -> dict[str, Any]:
+        """Delete a training day (cascades to its slots and entries)."""
+        try:
+            await client.delete(f"day/{day_id}/")
+            return {"deleted": True, "day_id": day_id}
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def delete_slot(slot_id: int) -> dict[str, Any]:
+        """Delete a slot (cascades to its entries and configs)."""
+        try:
+            await client.delete(f"slot/{slot_id}/")
+            return {"deleted": True, "slot_id": slot_id}
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def delete_slot_entry(slot_entry_id: int) -> dict[str, Any]:
+        """Delete a slot entry (the exercise binding) and its configs."""
+        try:
+            await client.delete(f"slot-entry/{slot_entry_id}/")
+            return {"deleted": True, "slot_entry_id": slot_entry_id}
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
     async def attach_exercise_to_slot(
         slot_id: int,
         exercise_id: int,

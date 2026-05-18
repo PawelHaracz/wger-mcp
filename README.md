@@ -151,4 +151,4 @@ uv run ruff check
 
 ## License
 
-AGPL-3.0-or-later — matches the wger project. See [LICENSE](LICENSE).
+Unspecified for now. Will align with the wger project's license (AGPL-3.0-or-later) before public release.

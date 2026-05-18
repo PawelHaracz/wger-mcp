@@ -3,10 +3,8 @@ name = "wger-mcp"
 version = "0.1.0"
 description = "MCP server exposing the wger fitness/nutrition REST API as tools, with pluggable auth"
 readme = "README.md"
-license = { text = "AGPL-3.0-or-later" }
 requires-python = ">=3.11"
 classifiers = [
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

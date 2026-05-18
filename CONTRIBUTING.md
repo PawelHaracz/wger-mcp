@@ -48,4 +48,4 @@ Tools live in `server.py`. Each is an `async def` decorated with `@mcp.tool()` w
 
 ## License
 
-AGPL-3.0-or-later, to match the wger project. By contributing you agree your code is licensed under the same terms.
+Unspecified for now. The intent is to align with the wger project's license (AGPL-3.0-or-later) once this is handed off upstream.

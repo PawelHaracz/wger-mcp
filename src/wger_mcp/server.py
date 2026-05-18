@@ -68,6 +68,85 @@ def build_app(settings: Settings) -> Starlette:
             return _err(exc)
 
     @mcp.tool()
+    async def list_routine_days(
+        routine_id: int,
+        limit: Annotated[int, Field(ge=1, le=200)] = 50,
+    ) -> list[dict[str, Any]]:
+        """List training days of a routine."""
+        try:
+            return await client.paginate(
+                "day/", params={"routine": routine_id, "ordering": "order"}, limit=limit
+            )
+        except WgerError as exc:
+            return [_err(exc)]
+
+    @mcp.tool()
+    async def get_routine_day(day_id: int) -> dict[str, Any]:
+        """Fetch a single training day."""
+        try:
+            return await client.get(f"day/{day_id}/")
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def list_slots(
+        day_id: int,
+        limit: Annotated[int, Field(ge=1, le=200)] = 50,
+    ) -> list[dict[str, Any]]:
+        """List slots in a training day."""
+        try:
+            return await client.paginate(
+                "slot/", params={"day": day_id, "ordering": "order"}, limit=limit
+            )
+        except WgerError as exc:
+            return [_err(exc)]
+
+    @mcp.tool()
+    async def list_slot_entries(
+        slot_id: int,
+        limit: Annotated[int, Field(ge=1, le=200)] = 50,
+    ) -> list[dict[str, Any]]:
+        """List exercise entries in a slot."""
+        try:
+            return await client.paginate(
+                "slot-entry/", params={"slot": slot_id, "ordering": "order"}, limit=limit
+            )
+        except WgerError as exc:
+            return [_err(exc)]
+
+    @mcp.tool()
+    async def get_slot_entry(entry_id: int) -> dict[str, Any]:
+        """Fetch a slot entry. Note: per-set sets/reps/weight/rir/rest are stored
+        on separate *-config endpoints linked by slot_entry, not on the entry
+        itself. Use list_slot_entry_configs to read them."""
+        try:
+            return await client.get(f"slot-entry/{entry_id}/")
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def list_slot_entry_configs(
+        slot_entry_id: int,
+        kinds: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch per-iteration configs for a slot entry. kinds filters which
+        ones to read (e.g. ['sets','reps','weight']); default = all 10."""
+        out: dict[str, Any] = {"slot_entry_id": slot_entry_id}
+        targets = kinds or list(_SLOT_CONFIG_PATHS.keys())
+        for kind in targets:
+            path = _SLOT_CONFIG_PATHS.get(kind)
+            if not path:
+                out[kind] = {"error": True, "detail": f"unknown kind '{kind}'"}
+                continue
+            try:
+                out[kind] = await client.paginate(
+                    path, params={"slot_entry": slot_entry_id, "ordering": "iteration"}, limit=200
+                )
+            except WgerError as exc:
+                out[kind] = _err(exc)
+        return out
+
+    @mcp.tool()
     async def create_routine(
         name: Annotated[str, Field(min_length=1, max_length=255)],
         description: str = "",
@@ -155,6 +234,141 @@ def build_app(settings: Settings) -> Starlette:
             payload["rest"] = rest_seconds
         try:
             return await client.post("slot/", json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def update_routine_day(
+        day_id: int,
+        name: str | None = None,
+        order: Annotated[int | None, Field(ge=1, le=100)] = None,
+        description: str | None = None,
+        is_rest: bool | None = None,
+        day_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Patch a training day. Only provided fields are sent."""
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if order is not None:
+            payload["order"] = order
+        if description is not None:
+            payload["description"] = description
+        if is_rest is not None:
+            payload["is_rest"] = is_rest
+        if day_type is not None:
+            payload["type"] = day_type
+        if not payload:
+            return {"error": True, "status": 400, "detail": "no fields to update"}
+        try:
+            return await client.patch(f"day/{day_id}/", json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def update_slot(
+        slot_id: int,
+        order: Annotated[int | None, Field(ge=1, le=100)] = None,
+        sets: Annotated[int | None, Field(ge=1, le=50)] = None,
+        rest_seconds: Annotated[int | None, Field(ge=0, le=3600)] = None,
+        comment: str | None = None,
+    ) -> dict[str, Any]:
+        """Patch a slot."""
+        payload: dict[str, Any] = {}
+        if order is not None:
+            payload["order"] = order
+        if sets is not None:
+            payload["sets"] = sets
+        if rest_seconds is not None:
+            payload["rest"] = rest_seconds
+        if comment is not None:
+            payload["comment"] = comment
+        if not payload:
+            return {"error": True, "status": 400, "detail": "no fields to update"}
+        try:
+            return await client.patch(f"slot/{slot_id}/", json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def update_slot_entry(
+        slot_entry_id: int,
+        exercise_id: int | None = None,
+        order: Annotated[int | None, Field(ge=1, le=100)] = None,
+        comment: str | None = None,
+        repetition_unit: int | None = None,
+        weight_unit: int | None = None,
+    ) -> dict[str, Any]:
+        """Patch a slot entry (the exercise binding)."""
+        payload: dict[str, Any] = {}
+        if exercise_id is not None:
+            payload["exercise"] = exercise_id
+        if order is not None:
+            payload["order"] = order
+        if comment is not None:
+            payload["comment"] = comment
+        if repetition_unit is not None:
+            payload["repetition_unit"] = repetition_unit
+        if weight_unit is not None:
+            payload["weight_unit"] = weight_unit
+        if not payload:
+            return {"error": True, "status": 400, "detail": "no fields to update"}
+        try:
+            return await client.patch(f"slot-entry/{slot_entry_id}/", json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def update_slot_entry_config(
+        kind: str,
+        config_id: int,
+        value: float | None = None,
+        iteration: Annotated[int | None, Field(ge=1, le=1000)] = None,
+        operation: str | None = None,
+        step: str | None = None,
+        repeat: bool | None = None,
+    ) -> dict[str, Any]:
+        """Patch an existing per-iteration config record.
+        kind selects the endpoint (sets, reps, weight, rir, rest, max_*).
+        Use this to bump weight when progressing."""
+        path = _SLOT_CONFIG_PATHS.get(kind)
+        if not path:
+            return {
+                "error": True,
+                "status": 400,
+                "detail": f"unknown kind '{kind}'; expected one of {sorted(_SLOT_CONFIG_PATHS)}",
+            }
+        payload: dict[str, Any] = {}
+        if value is not None:
+            payload["value"] = value
+        if iteration is not None:
+            payload["iteration"] = iteration
+        if operation is not None:
+            payload["operation"] = operation
+        if step is not None:
+            payload["step"] = step
+        if repeat is not None:
+            payload["repeat"] = repeat
+        if not payload:
+            return {"error": True, "status": 400, "detail": "no fields to update"}
+        try:
+            return await client.patch(f"{path}{config_id}/", json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def delete_slot_entry_config(kind: str, config_id: int) -> dict[str, Any]:
+        """Delete a per-iteration config record."""
+        path = _SLOT_CONFIG_PATHS.get(kind)
+        if not path:
+            return {
+                "error": True,
+                "status": 400,
+                "detail": f"unknown kind '{kind}'; expected one of {sorted(_SLOT_CONFIG_PATHS)}",
+            }
+        try:
+            await client.delete(f"{path}{config_id}/")
+            return {"deleted": True, "kind": kind, "config_id": config_id}
         except WgerError as exc:
             return _err(exc)
 
@@ -396,6 +610,68 @@ def build_app(settings: Settings) -> Starlette:
             return _err(exc)
 
     @mcp.tool()
+    async def list_workout_logs(
+        date_from: date | None = None,
+        date_to: date | None = None,
+        exercise_id: int | None = None,
+        limit: Annotated[int, Field(ge=1, le=1000)] = 100,
+    ) -> list[dict[str, Any]]:
+        """List workout log entries (individual sets) with optional date/exercise filters."""
+        params: dict[str, Any] = {"ordering": "-date"}
+        if date_from is not None:
+            params["date__gte"] = date_from.isoformat()
+        if date_to is not None:
+            params["date__lte"] = date_to.isoformat()
+        if exercise_id is not None:
+            params["exercise"] = exercise_id
+        try:
+            return await client.paginate("workoutlog/", params=params, limit=limit)
+        except WgerError as exc:
+            return [_err(exc)]
+
+    @mcp.tool()
+    async def get_workout_log(log_id: int) -> dict[str, Any]:
+        """Fetch one workout log entry."""
+        try:
+            return await client.get(f"workoutlog/{log_id}/")
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def update_workout_log(
+        log_id: int,
+        reps: Annotated[int | None, Field(ge=1, le=1000)] = None,
+        weight_kg: Annotated[float | None, Field(ge=0, le=1000)] = None,
+        rir: Annotated[float | None, Field(ge=0, le=10)] = None,
+        when: date | None = None,
+    ) -> dict[str, Any]:
+        """Patch a workout log entry. Only provided fields are sent."""
+        payload: dict[str, Any] = {}
+        if reps is not None:
+            payload["reps"] = reps
+        if weight_kg is not None:
+            payload["weight"] = weight_kg
+        if rir is not None:
+            payload["rir"] = rir
+        if when is not None:
+            payload["date"] = when.isoformat()
+        if not payload:
+            return {"error": True, "status": 400, "detail": "no fields to update"}
+        try:
+            return await client.patch(f"workoutlog/{log_id}/", json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def delete_workout_log(log_id: int) -> dict[str, Any]:
+        """Delete a workout log entry."""
+        try:
+            await client.delete(f"workoutlog/{log_id}/")
+            return {"deleted": True, "log_id": log_id}
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
     async def log_body_weight(
         weight_kg: Annotated[float, Field(gt=0, le=500)],
         when: date | None = None,
@@ -421,6 +697,34 @@ def build_app(settings: Settings) -> Starlette:
             )
         except WgerError as exc:
             return [_err(exc)]
+
+    @mcp.tool()
+    async def update_body_weight_entry(
+        entry_id: int,
+        weight_kg: Annotated[float | None, Field(gt=0, le=500)] = None,
+        when: date | None = None,
+    ) -> dict[str, Any]:
+        """Patch a body-weight entry."""
+        payload: dict[str, Any] = {}
+        if weight_kg is not None:
+            payload["weight"] = weight_kg
+        if when is not None:
+            payload["date"] = when.isoformat()
+        if not payload:
+            return {"error": True, "status": 400, "detail": "no fields to update"}
+        try:
+            return await client.patch(f"weightentry/{entry_id}/", json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def delete_body_weight_entry(entry_id: int) -> dict[str, Any]:
+        """Delete a body-weight entry."""
+        try:
+            await client.delete(f"weightentry/{entry_id}/")
+            return {"deleted": True, "entry_id": entry_id}
+        except WgerError as exc:
+            return _err(exc)
 
     @mcp.tool()
     async def list_nutrition_plans(
@@ -532,6 +836,266 @@ def build_app(settings: Settings) -> Starlette:
             "total_volume_kg": round(sum(v["volume_kg"] for v in per_exercise.values()), 2),
             "exercises": breakdown,
         }
+
+    @mcp.tool()
+    async def exercise_history(
+        exercise_id: int,
+        days: Annotated[int, Field(ge=1, le=730)] = 90,
+        limit: Annotated[int, Field(ge=1, le=2000)] = 500,
+    ) -> dict[str, Any]:
+        """Return chronological workout-log entries for one exercise over the
+        last N days. Includes per-session aggregates."""
+        since = (date.today() - timedelta(days=days - 1)).isoformat()
+        try:
+            logs = await client.paginate(
+                "workoutlog/",
+                params={"exercise": exercise_id, "date__gte": since, "ordering": "date"},
+                limit=limit,
+            )
+        except WgerError as exc:
+            return _err(exc)
+        sessions: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"sets": 0, "reps": 0, "volume_kg": 0.0, "top_weight": 0.0, "entries": []}
+        )
+        for entry in logs:
+            try:
+                weight = float(entry.get("weight") or 0)
+            except (TypeError, ValueError):
+                weight = 0.0
+            reps = entry.get("reps") or 0
+            d = entry.get("date") or ""
+            b = sessions[d]
+            b["sets"] += 1
+            b["reps"] += reps
+            b["volume_kg"] += reps * weight
+            b["top_weight"] = max(b["top_weight"], weight)
+            b["entries"].append({
+                "id": entry.get("id"),
+                "reps": reps,
+                "weight": weight,
+                "rir": entry.get("rir"),
+            })
+        return {
+            "exercise_id": exercise_id,
+            "since": since,
+            "until": date.today().isoformat(),
+            "total_sets": sum(s["sets"] for s in sessions.values()),
+            "sessions": [
+                {
+                    "date": d,
+                    **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in s.items()},
+                }
+                for d, s in sorted(sessions.items())
+            ],
+        }
+
+    @mcp.tool()
+    async def personal_records(
+        exercise_id: int | None = None,
+        days: Annotated[int, Field(ge=1, le=3650)] = 730,
+    ) -> dict[str, Any]:
+        """Compute PRs from workout logs: max weight, max reps, best
+        Epley-estimated 1RM. If exercise_id is omitted, returns one record
+        block per exercise."""
+        since = (date.today() - timedelta(days=days - 1)).isoformat()
+        params: dict[str, Any] = {"date__gte": since, "ordering": "date"}
+        if exercise_id is not None:
+            params["exercise"] = exercise_id
+        try:
+            logs = await client.paginate("workoutlog/", params=params, limit=5000)
+        except WgerError as exc:
+            return _err(exc)
+
+        def _epley(weight: float, reps: int) -> float:
+            return weight * (1 + reps / 30) if reps > 0 else 0.0
+
+        per_ex: dict[int, dict[str, Any]] = {}
+        for entry in logs:
+            ex_id = entry.get("exercise") or entry.get("exercise_base")
+            if ex_id is None:
+                continue
+            try:
+                weight = float(entry.get("weight") or 0)
+            except (TypeError, ValueError):
+                weight = 0.0
+            reps = entry.get("reps") or 0
+            est_1rm = _epley(weight, reps)
+            rec = per_ex.setdefault(
+                ex_id,
+                {
+                    "exercise_id": ex_id,
+                    "max_weight": {"value": 0.0, "reps": 0, "date": None, "log_id": None},
+                    "max_reps": {"value": 0, "weight": 0.0, "date": None, "log_id": None},
+                    "best_est_1rm": {
+                        "value": 0.0,
+                        "weight": 0.0,
+                        "reps": 0,
+                        "date": None,
+                        "log_id": None,
+                    },
+                },
+            )
+            if weight > rec["max_weight"]["value"]:
+                rec["max_weight"] = {
+                    "value": weight,
+                    "reps": reps,
+                    "date": entry.get("date"),
+                    "log_id": entry.get("id"),
+                }
+            if reps > rec["max_reps"]["value"]:
+                rec["max_reps"] = {
+                    "value": reps,
+                    "weight": weight,
+                    "date": entry.get("date"),
+                    "log_id": entry.get("id"),
+                }
+            if est_1rm > rec["best_est_1rm"]["value"]:
+                rec["best_est_1rm"] = {
+                    "value": round(est_1rm, 2),
+                    "weight": weight,
+                    "reps": reps,
+                    "date": entry.get("date"),
+                    "log_id": entry.get("id"),
+                }
+
+        return {
+            "since": since,
+            "until": date.today().isoformat(),
+            "records": sorted(
+                per_ex.values(),
+                key=lambda r: r["best_est_1rm"]["value"],
+                reverse=True,
+            ),
+        }
+
+    @mcp.tool()
+    async def nutrition_summary(
+        when: date | None = None,
+        plan_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Sum kcal/protein/carbs/fat from diary entries for a date. Per entry,
+        fetches the ingredient's macros (per 100 g) and scales by amount_g."""
+        target = (when or date.today()).isoformat()
+        params: dict[str, Any] = {"datetime__date": target}
+        if plan_id is not None:
+            params["plan"] = plan_id
+        try:
+            entries = await client.paginate("nutritiondiary/", params=params, limit=500)
+        except WgerError as exc:
+            return _err(exc)
+
+        totals = {"kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
+        items: list[dict[str, Any]] = []
+        cache: dict[int, dict[str, Any]] = {}
+        for e in entries:
+            ing_id = e.get("ingredient")
+            amount = float(e.get("amount") or 0)
+            if not ing_id or amount <= 0:
+                continue
+            if ing_id not in cache:
+                try:
+                    cache[ing_id] = await client.get(f"ingredient/{ing_id}/")
+                except WgerError as exc:
+                    cache[ing_id] = {"_err": _err(exc)}
+            ing = cache[ing_id]
+            if "_err" in ing:
+                items.append({
+                    "entry_id": e.get("id"),
+                    "ingredient_id": ing_id,
+                    "error": ing["_err"],
+                })
+                continue
+            factor = amount / 100.0
+            kcal = float(ing.get("energy") or 0) * factor
+            prot = float(ing.get("protein") or 0) * factor
+            carb = float(ing.get("carbohydrates") or 0) * factor
+            fat = float(ing.get("fat") or 0) * factor
+            totals["kcal"] += kcal
+            totals["protein_g"] += prot
+            totals["carbs_g"] += carb
+            totals["fat_g"] += fat
+            items.append({
+                "entry_id": e.get("id"),
+                "ingredient_id": ing_id,
+                "ingredient_name": ing.get("name"),
+                "amount_g": amount,
+                "kcal": round(kcal, 1),
+                "protein_g": round(prot, 1),
+                "carbs_g": round(carb, 1),
+                "fat_g": round(fat, 1),
+            })
+        return {
+            "date": target,
+            "totals": {k: round(v, 1) for k, v in totals.items()},
+            "items": items,
+        }
+
+    @mcp.tool()
+    async def list_categories(
+        limit: Annotated[int, Field(ge=1, le=500)] = 100,
+    ) -> list[dict[str, Any]]:
+        """List exercise categories (Chest, Back, …)."""
+        try:
+            return await client.paginate("exercisecategory/", limit=limit)
+        except WgerError as exc:
+            return [_err(exc)]
+
+    @mcp.tool()
+    async def list_equipment(
+        limit: Annotated[int, Field(ge=1, le=500)] = 100,
+    ) -> list[dict[str, Any]]:
+        """List exercise equipment (Dumbbell, Barbell, …)."""
+        try:
+            return await client.paginate("equipment/", limit=limit)
+        except WgerError as exc:
+            return [_err(exc)]
+
+    @mcp.tool()
+    async def list_muscles(
+        limit: Annotated[int, Field(ge=1, le=500)] = 100,
+    ) -> list[dict[str, Any]]:
+        """List muscles."""
+        try:
+            return await client.paginate("muscle/", limit=limit)
+        except WgerError as exc:
+            return [_err(exc)]
+
+    @mcp.tool()
+    async def search_exercises_by_filter(
+        equipment_id: int | None = None,
+        muscle_id: int | None = None,
+        category_id: int | None = None,
+        language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] = "en",
+        limit: Annotated[int, Field(ge=1, le=200)] = 50,
+    ) -> list[dict[str, Any]]:
+        """Find exercises by structured filters (e.g. Dumbbell + Back)."""
+        params: dict[str, Any] = {"language__code": language}
+        if equipment_id is not None:
+            params["equipment"] = equipment_id
+        if muscle_id is not None:
+            params["muscles"] = muscle_id
+        if category_id is not None:
+            params["category"] = category_id
+        try:
+            results = await client.paginate("exerciseinfo/", params=params, limit=limit)
+        except WgerError as exc:
+            return [_err(exc)]
+        shaped: list[dict[str, Any]] = []
+        for ex in results:
+            if not isinstance(ex, dict):
+                continue
+            translations = [
+                t for t in (ex.get("translations") or []) if isinstance(t, dict) and t.get("name")
+            ]
+            shaped.append({
+                "id": ex.get("id"),
+                "uuid": ex.get("uuid"),
+                "name": (translations[0].get("name") if translations else None),
+                "category": (ex.get("category") or {}).get("name"),
+                "equipment": [e.get("name") for e in (ex.get("equipment") or [])],
+                "muscles": [m.get("name") for m in (ex.get("muscles") or [])],
+            })
+        return shaped
 
     @mcp.tool()
     async def log_ingredient(

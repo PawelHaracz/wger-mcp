@@ -111,6 +111,19 @@ MCP_AUTH=none
 | `set_slot_entry_config(slot_entry_id, kind, value, iteration?, operation?, step?, repeat?)` | Add per-iteration config (kind: sets, reps, weight, rir, rest, max_*) |
 | `add_exercise_with_sets(day_id, exercise_id, sets, reps, weight_kg, slot_order?, rest_seconds?)` | Convenience: slot + entry + sets/reps/weight configs in one call |
 | `delete_routine(routine_id)` / `delete_routine_day(day_id)` / `delete_slot(slot_id)` / `delete_slot_entry(slot_entry_id)` | Cascade deletes for routine subtree |
+| `list_routine_days(routine_id)` / `get_routine_day(day_id)` | Read routine day structure |
+| `list_slots(day_id)` / `list_slot_entries(slot_id)` / `get_slot_entry(entry_id)` | Read slot + entry structure |
+| `list_slot_entry_configs(slot_entry_id, kinds?)` | Read per-iteration configs (sets/reps/weight/...) for an entry |
+| `update_routine_day(day_id, ...)` / `update_slot(slot_id, ...)` / `update_slot_entry(entry_id, ...)` | Patch routine subtree |
+| `update_slot_entry_config(kind, config_id, value?, iteration?, ...)` / `delete_slot_entry_config(kind, config_id)` | Update or delete a config record (use to bump weight on progression) |
+| `list_workout_logs(date_from?, date_to?, exercise_id?, limit?)` / `get_workout_log(log_id)` | Read workout-log entries |
+| `update_workout_log(log_id, reps?, weight_kg?, rir?, when?)` / `delete_workout_log(log_id)` | Edit / remove a workout-log entry |
+| `update_body_weight_entry(entry_id, weight_kg?, when?)` / `delete_body_weight_entry(entry_id)` | Edit / remove a body-weight entry |
+| `exercise_history(exercise_id, days?, limit?)` | Per-session aggregates (sets, reps, top weight, volume) for one exercise |
+| `personal_records(exercise_id?, days?)` | Max weight, max reps, Epley-estimated 1RM per exercise |
+| `nutrition_summary(when?, plan_id?)` | Daily kcal/protein/carbs/fat from diary entries |
+| `list_categories` / `list_equipment` / `list_muscles` | Reference data |
+| `search_exercises_by_filter(equipment_id?, muscle_id?, category_id?, language?, limit?)` | Filtered exercise lookup (e.g. Dumbbell + Back) |
 | `list_workouts` | Legacy workout plans |
 | `search_exercises(query, language, limit)` | Find exercises by name (ISO 639-1 language code) |
 | `get_exercise(id)` | Full exercise detail: muscles, equipment, instructions |

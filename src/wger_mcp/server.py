@@ -163,37 +163,130 @@ def build_app(settings: Settings) -> Starlette:
         slot_id: int,
         exercise_id: int,
         order: Annotated[int, Field(ge=1, le=100)] = 1,
-        reps: Annotated[int | None, Field(ge=1, le=1000)] = None,
-        weight_kg: Annotated[float | None, Field(ge=0, le=1000)] = None,
+        repetition_unit: int | None = None,
+        weight_unit: int | None = None,
+        comment: str = "",
     ) -> dict[str, Any]:
-        """Attach an exercise to a slot. exercise_id is the numeric wger id; the
-        slot-entry endpoint requires the exercise UUID, which is resolved via
-        /exerciseinfo/{id}/."""
-        try:
-            info = await client.get(f"exerciseinfo/{exercise_id}/")
-        except WgerError as exc:
-            return _err(exc)
-        uuid = info.get("uuid") if isinstance(info, dict) else None
-        if not uuid:
-            return {
-                "error": True,
-                "status": 404,
-                "detail": f"exercise {exercise_id} has no uuid",
-            }
+        """Attach an exercise to a slot. exercise_id is the numeric wger PK
+        (same id used in log_set / exerciseinfo). Per-set reps/weight live on
+        sets-config / repetitions-config / weight-config records, not here."""
         payload: dict[str, Any] = {
             "slot": slot_id,
-            "exercise": uuid,
+            "exercise": exercise_id,
             "order": order,
+            "comment": comment,
         }
-        if reps is not None:
-            payload["reps"] = reps
-        if weight_kg is not None:
-            payload["weight"] = weight_kg
-            payload["weight_unit"] = 1
+        if repetition_unit is not None:
+            payload["repetition_unit"] = repetition_unit
+        if weight_unit is not None:
+            payload["weight_unit"] = weight_unit
         try:
             return await client.post("slot-entry/", json=payload)
         except WgerError as exc:
             return _err(exc)
+
+    _SLOT_CONFIG_PATHS = {
+        "sets": "sets-config/",
+        "reps": "repetitions-config/",
+        "weight": "weight-config/",
+        "rir": "rir-config/",
+        "rest": "rest-config/",
+        "max_sets": "max-sets-config/",
+        "max_reps": "max-repetitions-config/",
+        "max_weight": "max-weight-config/",
+        "max_rir": "max-rir-config/",
+        "max_rest": "max-rest-config/",
+    }
+
+    @mcp.tool()
+    async def set_slot_entry_config(
+        slot_entry_id: int,
+        kind: str,
+        value: float,
+        iteration: Annotated[int, Field(ge=1, le=1000)] = 1,
+        operation: str = "r",
+        step: str = "abs",
+        repeat: bool = False,
+    ) -> dict[str, Any]:
+        """Create a per-iteration config record for a slot entry.
+        kind: one of sets, reps, weight, rir, rest, max_sets, max_reps,
+        max_weight, max_rir, max_rest. operation 'r' = replace, 'a' = add,
+        's' = subtract. step 'abs' or 'percent'."""
+        path = _SLOT_CONFIG_PATHS.get(kind)
+        if not path:
+            return {
+                "error": True,
+                "status": 400,
+                "detail": f"unknown kind '{kind}'; expected one of {sorted(_SLOT_CONFIG_PATHS)}",
+            }
+        payload: dict[str, Any] = {
+            "slot_entry": slot_entry_id,
+            "iteration": iteration,
+            "value": value,
+            "operation": operation,
+            "step": step,
+            "repeat": repeat,
+        }
+        try:
+            return await client.post(path, json=payload)
+        except WgerError as exc:
+            return _err(exc)
+
+    @mcp.tool()
+    async def add_exercise_with_sets(
+        day_id: int,
+        exercise_id: int,
+        sets: Annotated[int, Field(ge=1, le=50)],
+        reps: Annotated[int, Field(ge=1, le=1000)],
+        weight_kg: Annotated[float, Field(ge=0, le=1000)],
+        slot_order: Annotated[int, Field(ge=1, le=100)] = 1,
+        rest_seconds: Annotated[int | None, Field(ge=0, le=3600)] = None,
+    ) -> dict[str, Any]:
+        """High-level convenience: create slot + slot-entry + sets/reps/weight
+        configs in one call. Returns the created ids. Partial failures are
+        reported in the response."""
+        result: dict[str, Any] = {}
+        slot_payload: dict[str, Any] = {"day": day_id, "order": slot_order}
+        if rest_seconds is not None:
+            slot_payload["rest"] = rest_seconds
+        try:
+            slot = await client.post("slot/", json=slot_payload)
+        except WgerError as exc:
+            return _err(exc) | {"stage": "slot"}
+        result["slot"] = slot
+        slot_id = slot.get("id") if isinstance(slot, dict) else None
+        if not slot_id:
+            return result | {"error": True, "stage": "slot", "detail": "missing slot id"}
+
+        try:
+            entry = await client.post(
+                "slot-entry/",
+                json={"slot": slot_id, "exercise": exercise_id, "order": 1, "comment": ""},
+            )
+        except WgerError as exc:
+            return result | _err(exc) | {"stage": "slot-entry"}
+        result["slot_entry"] = entry
+        entry_id = entry.get("id") if isinstance(entry, dict) else None
+        if not entry_id:
+            return result | {"error": True, "stage": "slot-entry", "detail": "missing entry id"}
+
+        for kind, value in (("sets", sets), ("reps", reps), ("weight", weight_kg)):
+            try:
+                result[f"{kind}_config"] = await client.post(
+                    _SLOT_CONFIG_PATHS[kind],
+                    json={
+                        "slot_entry": entry_id,
+                        "iteration": 1,
+                        "value": value,
+                        "operation": "r",
+                        "step": "abs",
+                        "repeat": False,
+                    },
+                )
+            except WgerError as exc:
+                return result | _err(exc) | {"stage": f"{kind}-config"}
+
+        return result
 
     @mcp.tool()
     async def list_workouts(

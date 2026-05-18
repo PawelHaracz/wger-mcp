@@ -306,14 +306,36 @@ def build_app(settings: Settings) -> Starlette:
     ) -> list[dict[str, Any]]:
         """Search the wger exercise database by name. Language is ISO 639-1 ('en','pl',...)."""
         try:
-            data = await client.get(
-                "exercise/search/",
-                params={"term": query, "language": language},
+            results = await client.paginate(
+                "exerciseinfo/",
+                params={"name__search": query, "language__code": language},
+                limit=limit,
             )
-            results = data.get("suggestions", []) if isinstance(data, dict) else []
-            return results[:limit]
         except WgerError as exc:
             return [_err(exc)]
+        q_lower = query.lower()
+        shaped: list[dict[str, Any]] = []
+        for ex in results:
+            if not isinstance(ex, dict):
+                continue
+            translations = [
+                t for t in (ex.get("translations") or []) if isinstance(t, dict) and t.get("name")
+            ]
+            match = next(
+                (t for t in translations if q_lower in (t.get("name") or "").lower()),
+                translations[0] if translations else None,
+            )
+            shaped.append({
+                "id": ex.get("id"),
+                "uuid": ex.get("uuid"),
+                "name": (match or {}).get("name"),
+                "category": (ex.get("category") or {}).get("name"),
+                "equipment": [e.get("name") for e in (ex.get("equipment") or [])],
+                "translations": [
+                    {"language": t.get("language"), "name": t.get("name")} for t in translations
+                ],
+            })
+        return shaped
 
     @mcp.tool()
     async def log_set(
@@ -398,14 +420,28 @@ def build_app(settings: Settings) -> Starlette:
     ) -> list[dict[str, Any]]:
         """Search wger's ingredient database (foods with macros)."""
         try:
-            data = await client.get(
-                "ingredient/search/",
-                params={"term": query, "language": language},
+            results = await client.paginate(
+                "ingredientinfo/",
+                params={"name__search": query, "language__code": language},
+                limit=limit,
             )
-            results = data.get("suggestions", []) if isinstance(data, dict) else []
-            return results[:limit]
         except WgerError as exc:
             return [_err(exc)]
+        shaped: list[dict[str, Any]] = []
+        for ing in results:
+            if not isinstance(ing, dict):
+                continue
+            shaped.append({
+                "id": ing.get("id"),
+                "uuid": ing.get("uuid"),
+                "name": ing.get("name"),
+                "energy": ing.get("energy"),
+                "protein": ing.get("protein"),
+                "carbohydrates": ing.get("carbohydrates"),
+                "fat": ing.get("fat"),
+                "brand": ing.get("brand"),
+            })
+        return shaped
 
     @mcp.tool()
     async def weekly_summary(

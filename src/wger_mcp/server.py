@@ -275,6 +275,9 @@ def build_app(settings: Settings) -> Starlette:
         Mount(settings.mcp_path, app=mcp.streamable_http_app()),
     ]
     app = Starlette(routes=routes, lifespan=lifespan)
+    # Keep `/mcp` and `/mcp/` both as MCP entry points instead of issuing a 307
+    # from one to the other — MCP clients (and curl) do not follow redirects on POST.
+    app.router.redirect_slashes = False
     auth_cls, auth_kwargs = build_auth_middleware(settings)
     app.add_middleware(auth_cls, **auth_kwargs)
     return app
@@ -288,7 +291,17 @@ def main() -> None:
     settings = load_settings()
     log.info("MCP_AUTH=%s, MCP_PATH=%s", settings.mcp_auth.value, settings.mcp_path)
     app = build_app(settings)
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+    # forwarded_allow_ips="*" so uvicorn trusts X-Forwarded-Proto / -For from any
+    # peer. Required when running behind a reverse proxy on a separate IP (the
+    # default whitelist of 127.0.0.1 silently ignores headers from nginx etc).
+    uvicorn.run(
+        app,
+        host=settings.host,
+        port=settings.port,
+        log_level="info",
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+    )
 
 
 if __name__ == "__main__":

@@ -314,6 +314,222 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
+    async def calculate_daily_calories(
+        weight_kg: Annotated[float | None, Field(gt=20, le=400)] = None,
+        height_cm: Annotated[float | None, Field(gt=80, le=260)] = None,
+        age: Annotated[int | None, Field(ge=10, le=100)] = None,
+        sex: Annotated[str | None, Field(pattern=r"^(male|female)$")] = None,
+        activity_level: str = "moderate",
+        goal: str = "maintain",
+        protein_g_per_kg: Annotated[float, Field(ge=0.8, le=3.5)] = 1.8,
+        fat_pct_of_kcal: Annotated[float, Field(ge=15, le=45)] = 25.0,
+        apply_to_profile: bool = False,
+    ) -> dict[str, Any]:
+        """Compute daily kcal target and macro split.
+
+        Uses the Mifflin-St Jeor BMR formula x activity multiplier x goal
+        adjustment. Macro split: protein from g/kg bodyweight, fat from % of
+        target kcal, carbs from the remainder.
+
+        Any of weight_kg / height_cm / age / sex left as None are auto-filled:
+        height/age/sex from /userprofile/ (gender "1"=male, "2"=female),
+        weight from the latest /weightentry/. If apply_to_profile=True, PATCH
+        the resulting target_kcal into userprofile.calories.
+
+        activity_level: sedentary (1.2), light (1.375), moderate (1.55),
+        active (1.725), very_active (1.9).
+        goal: cut (-500 kcal), maintain (0), bulk (+300 kcal).
+        """
+        activity_multipliers = {
+            "sedentary": 1.2,
+            "light": 1.375,
+            "moderate": 1.55,
+            "active": 1.725,
+            "very_active": 1.9,
+        }
+        goal_deltas = {"cut": -500.0, "maintain": 0.0, "bulk": 300.0}
+        if activity_level not in activity_multipliers:
+            return bad_request(
+                f"activity_level must be one of {sorted(activity_multipliers)}"
+            )
+        if goal not in goal_deltas:
+            return bad_request(f"goal must be one of {sorted(goal_deltas)}")
+
+        source: dict[str, str] = {}
+        for key, val in (
+            ("weight_kg", weight_kg),
+            ("height_cm", height_cm),
+            ("age", age),
+            ("sex", sex),
+        ):
+            if val is not None:
+                source[key] = "argument"
+
+        need_profile = any(v is None for v in (height_cm, age, sex))
+        need_weight = weight_kg is None
+        if need_profile or need_weight:
+            profile_coro = client.get("userprofile/") if need_profile else None
+            weight_coro = (
+                client.paginate("weightentry/", params={"ordering": "-date"}, limit=1)
+                if need_weight
+                else None
+            )
+            coros = [c for c in (profile_coro, weight_coro) if c is not None]
+            try:
+                results = await asyncio.gather(*coros)
+            except WgerError as exc:
+                return err(exc)
+            idx = 0
+            profile = results[idx] if need_profile else None
+            if need_profile:
+                idx += 1
+            latest_weights = results[idx] if need_weight else None
+
+            if isinstance(profile, dict):
+                if height_cm is None and profile.get("height") is not None:
+                    try:
+                        height_cm = float(profile["height"])
+                        source["height_cm"] = "userprofile"
+                    except (TypeError, ValueError):
+                        pass
+                if age is None and profile.get("age") is not None:
+                    try:
+                        age = int(profile["age"])
+                        source["age"] = "userprofile"
+                    except (TypeError, ValueError):
+                        pass
+                if sex is None:
+                    gender = str(profile.get("gender") or "")
+                    if gender == "1":
+                        sex = "male"
+                        source["sex"] = "userprofile"
+                    elif gender == "2":
+                        sex = "female"
+                        source["sex"] = "userprofile"
+            if weight_kg is None and latest_weights:
+                latest = latest_weights[0] if isinstance(latest_weights, list) else None
+                if isinstance(latest, dict):
+                    try:
+                        weight_kg = float(latest.get("weight") or 0) or None
+                        if weight_kg is not None:
+                            source["weight_kg"] = "weightentry"
+                    except (TypeError, ValueError):
+                        pass
+
+        missing = [
+            name
+            for name, val in (
+                ("weight_kg", weight_kg),
+                ("height_cm", height_cm),
+                ("age", age),
+                ("sex", sex),
+            )
+            if val is None
+        ]
+        if missing:
+            return bad_request(
+                "missing required fields (not found in wger profile / weight history): "
+                + ", ".join(missing)
+            )
+
+        # Mifflin-St Jeor
+        base = 10 * weight_kg + 6.25 * height_cm - 5 * age
+        bmr = base + (5 if sex == "male" else -161)
+        tdee = bmr * activity_multipliers[activity_level]
+        target = tdee + goal_deltas[goal]
+
+        protein_g = protein_g_per_kg * weight_kg
+        fat_g = (fat_pct_of_kcal / 100.0) * target / 9.0
+        carbs_kcal = target - (protein_g * 4 + fat_g * 9)
+        carbs_g = max(carbs_kcal / 4.0, 0.0)
+
+        target_kcal = round(target, 0)
+        result: dict[str, Any] = {
+            "bmr_kcal": round(bmr, 0),
+            "tdee_kcal": round(tdee, 0),
+            "target_kcal": target_kcal,
+            "macros": {
+                "protein_g": round(protein_g, 1),
+                "fat_g": round(fat_g, 1),
+                "carbs_g": round(carbs_g, 1),
+            },
+            "inputs": {
+                "weight_kg": weight_kg,
+                "height_cm": height_cm,
+                "age": age,
+                "sex": sex,
+                "activity_level": activity_level,
+                "goal": goal,
+                "protein_g_per_kg": protein_g_per_kg,
+                "fat_pct_of_kcal": fat_pct_of_kcal,
+            },
+            "input_sources": source,
+            "formula": "Mifflin-St Jeor",
+        }
+
+        if apply_to_profile:
+            try:
+                patched = await client.patch(
+                    "userprofile/", json={"calories": int(target_kcal)}
+                )
+                result["profile_update"] = {
+                    "applied": True,
+                    "calories": (
+                        patched.get("calories") if isinstance(patched, dict) else None
+                    ),
+                }
+            except WgerError as exc:
+                result["profile_update"] = {"applied": False, "error": err(exc)}
+
+        return result
+
+    @mcp.tool()
+    async def update_user_profile(
+        calories: Annotated[int | None, Field(ge=800, le=10000)] = None,
+        height_cm: Annotated[int | None, Field(gt=80, le=260)] = None,
+        birthdate: date | None = None,
+        gender: Annotated[str | None, Field(pattern=r"^(1|2)$")] = None,
+        sleep_hours: Annotated[int | None, Field(ge=0, le=24)] = None,
+        work_hours: Annotated[int | None, Field(ge=0, le=24)] = None,
+        work_intensity: Annotated[str | None, Field(pattern=r"^[123]$")] = None,
+        sport_hours: Annotated[int | None, Field(ge=0, le=24)] = None,
+        sport_intensity: Annotated[str | None, Field(pattern=r"^[123]$")] = None,
+        freetime_hours: Annotated[int | None, Field(ge=0, le=24)] = None,
+        freetime_intensity: Annotated[str | None, Field(pattern=r"^[123]$")] = None,
+    ) -> dict[str, Any]:
+        """Patch the wger user profile. gender: '1'=male, '2'=female.
+        intensity fields: '1'=low, '2'=moderate, '3'=high."""
+        payload: dict[str, Any] = {}
+        if calories is not None:
+            payload["calories"] = calories
+        if height_cm is not None:
+            payload["height"] = height_cm
+        if birthdate is not None:
+            payload["birthdate"] = birthdate.isoformat()
+        if gender is not None:
+            payload["gender"] = gender
+        if sleep_hours is not None:
+            payload["sleep_hours"] = sleep_hours
+        if work_hours is not None:
+            payload["work_hours"] = work_hours
+        if work_intensity is not None:
+            payload["work_intensity"] = work_intensity
+        if sport_hours is not None:
+            payload["sport_hours"] = sport_hours
+        if sport_intensity is not None:
+            payload["sport_intensity"] = sport_intensity
+        if freetime_hours is not None:
+            payload["freetime_hours"] = freetime_hours
+        if freetime_intensity is not None:
+            payload["freetime_intensity"] = freetime_intensity
+        if not payload:
+            return bad_request("no fields to update")
+        try:
+            return await client.patch("userprofile/", json=payload)
+        except WgerError as exc:
+            return err(exc)
+
+    @mcp.tool()
     async def nutrition_summary(
         when: date | None = None,
         plan_id: int | None = None,

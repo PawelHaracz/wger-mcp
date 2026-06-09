@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     wger_base_url: HttpUrl
     wger_api_token: str
 
+    # Optional session credentials, used only by the Django web-form fallback
+    # (custom-ingredient submission — wger's REST /ingredient/ is read-only).
+    wger_username: str | None = None
+    wger_password: str | None = None
+    wger_web_lang: str = "en"  # URL language prefix for the form endpoints
+
     # ---------- inbound auth strategy ----------
     mcp_auth: AuthStrategy = AuthStrategy.api_key
 

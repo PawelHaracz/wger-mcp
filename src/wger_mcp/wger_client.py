@@ -29,8 +29,19 @@ class WgerClient:
                 "User-Agent": "wger-mcp/0.1",
             },
         )
+        # Optional Django session client for endpoints not exposed via REST
+        # (e.g. custom-ingredient form submission). Set by server.build_app
+        # when WGER_USERNAME / WGER_PASSWORD are configured.
+        self.session: Any = None
+        # Extra httpx clients owned by tool modules (e.g. Open Food Facts).
+        # Tool modules append on register(); we close them on shutdown.
+        self._extra_clients: list[httpx.AsyncClient] = []
 
     async def aclose(self) -> None:
+        for extra in self._extra_clients:
+            await extra.aclose()
+        if self.session is not None:
+            await self.session.aclose()
         await self._client.aclose()
 
     async def __aenter__(self) -> WgerClient:

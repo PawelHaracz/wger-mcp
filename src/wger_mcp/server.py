@@ -15,12 +15,13 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
+from starlette.routing import Route
 
 from .auth import build_auth_middleware
 from .config import Settings, load_settings
 from .tools import register_all
 from .wger_client import WgerClient
+from .wger_session import WgerSession
 
 log = logging.getLogger("wger_mcp")
 
@@ -33,11 +34,18 @@ def build_app(settings: Settings) -> Starlette:
     mcp = FastMCP(
         "wger",
         json_response=True,
-        streamable_http_path="/",
+        streamable_http_path=settings.mcp_path,
         transport_security=transport_security,
     )
 
     client = WgerClient(settings.wger_api_root, settings.wger_api_token)
+    if settings.wger_username and settings.wger_password:
+        client.session = WgerSession(
+            str(settings.wger_base_url).rstrip("/"),
+            settings.wger_username,
+            settings.wger_password,
+            lang=settings.wger_web_lang,
+        )
     register_all(mcp, client)
 
     @contextlib.asynccontextmanager
@@ -51,10 +59,12 @@ def build_app(settings: Settings) -> Starlette:
     async def healthcheck(_: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    routes = [
-        Route("/health", healthcheck),
-        Mount(settings.mcp_path, app=mcp.streamable_http_app()),
-    ]
+    # streamable_http_app() registers Route(mcp_path, ...) internally.
+    # Merging its routes into the top-level Starlette avoids the double-prefix
+    # problem: an outer Mount("/mcp/") would strip the prefix before routing,
+    # leaving "" which never matches the inner Route("/mcp/") → 404.
+    mcp_starlette = mcp.streamable_http_app()
+    routes = [Route("/health", healthcheck)] + list(mcp_starlette.routes)
     app = Starlette(routes=routes, lifespan=lifespan)
     # Keep `/mcp` and `/mcp/` both as MCP entry points instead of issuing a 307
     # from one to the other — MCP clients (and curl) do not follow redirects on POST.

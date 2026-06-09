@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from ..wger_client import WgerClient, WgerError
+from ..wger_session import WgerSession, WgerSessionError
 from .common import bad_request, err
 
 _INGREDIENT_CONCURRENCY = 8
@@ -174,6 +175,13 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         except WgerError as exc:
             return err(exc)
 
+    # wger's /api/v2/ingredient/ endpoint is read-only (ReadOnlyModelViewSet).
+    # Custom ingredients can only be submitted via the Django web form at
+    # /<lang>/nutrition/ingredient/add/, which needs session-cookie auth (not
+    # a DRF token). create_ingredient below uses WgerSession (configured via
+    # WGER_USERNAME / WGER_PASSWORD) to drive that form. Submissions enter as
+    # 'pending' and need wger admin acceptance before becoming searchable.
+
     @mcp.tool()
     async def create_ingredient(
         name: Annotated[str, Field(min_length=1, max_length=200)],
@@ -181,89 +189,89 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         protein_g: Annotated[float, Field(ge=0, le=200)],
         carbohydrates_g: Annotated[float, Field(ge=0, le=200)],
         fat_g: Annotated[float, Field(ge=0, le=200)],
-        brand: Annotated[str | None, Field(max_length=200)] = None,
-        language_id: int = 2,
+        brand: Annotated[str, Field(max_length=200)] = "",
         carbohydrates_sugar_g: Annotated[float | None, Field(ge=0, le=200)] = None,
         fat_saturated_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        fibres_g: Annotated[float | None, Field(ge=0, le=200)] = None,
+        fiber_g: Annotated[float | None, Field(ge=0, le=200)] = None,
         sodium_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        code: Annotated[str | None, Field(max_length=200)] = None,
+        is_vegan: bool = False,
+        is_vegetarian: bool = False,
+        license_id: int = 2,
+        license_author: str = "",
     ) -> dict[str, Any]:
-        """Create a custom ingredient. Macros are per 100 g. language_id is
-        the wger Language PK (2 = English on wger.de). code is the optional
-        barcode (EAN/UPC)."""
-        payload: dict[str, Any] = {
+        """Submit a custom ingredient via wger's Django web form.
+
+        Background: wger's REST /ingredient/ endpoint is read-only by design
+        (ReadOnlyModelViewSet — confirmed at source level). Custom additions
+        are submitted through the web UI's /<lang>/nutrition/ingredient/add/
+        form, which uses session-cookie auth. This tool drives that form on
+        your behalf — requires WGER_USERNAME / WGER_PASSWORD in env.
+
+        Macros are per 100 g. license_id is the wger License PK (default 2 =
+        ODBL on wger.de; check /api/v2/license/ for your instance).
+        license_author defaults to your username if blank.
+
+        Caveat: ingredient submissions enter as 'pending' and are NOT
+        immediately searchable / loggable. A wger admin must accept them.
+        On self-hosted wger you can accept your own. On wger.de this may
+        take days. On success this tool returns the new ingredient id from
+        the redirect, so you can call get_ingredient(id) to check status.
+        """
+        session: WgerSession | None = getattr(client, "session", None)
+        if session is None:
+            return bad_request(
+                "WGER_USERNAME and WGER_PASSWORD are required for create_ingredient "
+                "(wger's REST /ingredient/ is read-only, so we submit via the web "
+                "form). Set both in .env and restart."
+            )
+        # Django form field name is 'fiber' (singular), unlike the API's 'fibres'.
+        form: dict[str, Any] = {
             "name": name,
-            "language": language_id,
+            "brand": brand,
             "energy": energy_kcal,
             "protein": protein_g,
             "carbohydrates": carbohydrates_g,
             "fat": fat_g,
+            "license": license_id,
+            "license_author": license_author,
+            "is_vegan": "on" if is_vegan else "",
+            "is_vegetarian": "on" if is_vegetarian else "",
         }
-        if brand is not None:
-            payload["brand"] = brand
         if carbohydrates_sugar_g is not None:
-            payload["carbohydrates_sugar"] = carbohydrates_sugar_g
+            form["carbohydrates_sugar"] = carbohydrates_sugar_g
         if fat_saturated_g is not None:
-            payload["fat_saturated"] = fat_saturated_g
-        if fibres_g is not None:
-            payload["fibres"] = fibres_g
+            form["fat_saturated"] = fat_saturated_g
+        if fiber_g is not None:
+            form["fiber"] = fiber_g
         if sodium_g is not None:
-            payload["sodium"] = sodium_g
-        if code is not None:
-            payload["code"] = code
+            form["sodium"] = sodium_g
+        path = f"/{session.lang}/nutrition/ingredient/add/"
         try:
-            return await client.post("ingredient/", json=payload)
-        except WgerError as exc:
-            return err(exc)
-
-    @mcp.tool()
-    async def update_ingredient(
-        ingredient_id: int,
-        name: Annotated[str | None, Field(max_length=200)] = None,
-        energy_kcal: Annotated[float | None, Field(ge=0, le=2000)] = None,
-        protein_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        carbohydrates_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        fat_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        brand: Annotated[str | None, Field(max_length=200)] = None,
-        carbohydrates_sugar_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        fat_saturated_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        fibres_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        sodium_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        code: Annotated[str | None, Field(max_length=200)] = None,
-    ) -> dict[str, Any]:
-        """Patch a custom ingredient. Only provided fields are sent. You can
-        only edit ingredients you own (community-maintained ones are read-only
-        for non-admins; wger will return 403)."""
-        payload: dict[str, Any] = {}
-        if name is not None:
-            payload["name"] = name
-        if energy_kcal is not None:
-            payload["energy"] = energy_kcal
-        if protein_g is not None:
-            payload["protein"] = protein_g
-        if carbohydrates_g is not None:
-            payload["carbohydrates"] = carbohydrates_g
-        if fat_g is not None:
-            payload["fat"] = fat_g
-        if brand is not None:
-            payload["brand"] = brand
-        if carbohydrates_sugar_g is not None:
-            payload["carbohydrates_sugar"] = carbohydrates_sugar_g
-        if fat_saturated_g is not None:
-            payload["fat_saturated"] = fat_saturated_g
-        if fibres_g is not None:
-            payload["fibres"] = fibres_g
-        if sodium_g is not None:
-            payload["sodium"] = sodium_g
-        if code is not None:
-            payload["code"] = code
-        if not payload:
-            return bad_request("no fields to update")
-        try:
-            return await client.patch(f"ingredient/{ingredient_id}/", json=payload)
-        except WgerError as exc:
-            return err(exc)
+            status, location, body = await session.submit_form(path, form)
+        except WgerSessionError as exc:
+            return {"error": True, "status": exc.status, "detail": exc.detail}
+        if status in (301, 302, 303):
+            new_id = WgerSession.extract_id_from_redirect(location, "ingredient")
+            return {
+                "submitted": True,
+                "id": new_id,
+                "moderation": "pending",
+                "note": (
+                    "Submission accepted by wger. The ingredient enters as "
+                    "pending and is not searchable until a wger admin "
+                    "accepts it. Call get_ingredient(id) to inspect status."
+                ),
+                "redirect": location,
+            }
+        # 200 means the form re-rendered with validation errors. Body is HTML;
+        # we surface a snippet for debugging rather than parsing.
+        snippet = body[:600] if isinstance(body, str) else ""
+        return {
+            "error": True,
+            "status": status,
+            "detail": "form validation failed (wger re-rendered the form)",
+            "html_snippet": snippet,
+        }
 
     @mcp.tool()
     async def log_ingredient(

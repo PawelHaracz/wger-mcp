@@ -161,8 +161,9 @@ Tools are grouped by domain. Each lives in its own module under [`src/wger_mcp/t
 | `search_ingredients(query, language, limit)` | Find foods by name |
 | `search_ingredient_by_barcode(barcode, limit?)` | Exact lookup by EAN/UPC (`?code=`) — preferred over name search |
 | `get_ingredient(ingredient_id)` | Full ingredient detail (macros per 100 g) |
-| `create_ingredient(name, energy_kcal, protein_g, carbohydrates_g, fat_g, brand?, language_id?, ...)` | Create a custom ingredient |
-| `update_ingredient(ingredient_id, ...)` | Patch a custom ingredient (only ones you own) |
+| `create_ingredient(name, energy_kcal, protein_g, carbohydrates_g, fat_g, brand?, ...)` | Submit a custom ingredient via wger's Django web form. Requires `WGER_USERNAME` + `WGER_PASSWORD` (see below). Enters as 'pending' until a wger admin accepts |
+
+> wger's REST `/ingredient/` is **read-only** by design (community-maintained DB). `create_ingredient` works around this by driving the `/<lang>/nutrition/ingredient/add/` Django form with session-cookie auth, so it needs separate username/password credentials. The submission enters as pending and isn't immediately searchable — a wger admin must accept it (instant on self-hosted, can take days on wger.de).
 
 ### Nutrition plans, meals, recipes, diary
 
@@ -187,6 +188,15 @@ Tools are grouped by domain. Each lives in its own module under [`src/wger_mcp/t
 | `personal_records(exercise_id?, days?)` | Max weight, max reps, Epley-estimated 1RM per exercise |
 | `volume_trend(days?, bucket, metrics?, group_by?, exercise_id?)` | Bucketed (day/week/month) volume; group_by none/exercise/muscle/category |
 | `compare_periods(window_days?, gap_days?, metrics?, group_by?)` | Rolling window A vs B (delta + delta%) |
+
+### Open Food Facts (external food database)
+
+| Tool | Description |
+|------|-------------|
+| `lookup_food_by_barcode(barcode)` | Resolve an EAN/UPC/GTIN on Open Food Facts. Returns Polish name + ingredients (when present), macros per 100 g, and a `wger_ingredient_payload` ready to pass straight to `create_ingredient`. Salt→sodium conversion applied automatically |
+| `lookup_foods_by_barcodes(barcodes[])` | Batch variant — concurrent fetches (capped at 4 in flight) with one-shot retry on 429. Returns map keyed by barcode |
+
+> Use these before `create_ingredient` when you have a barcode — far more accurate than wger name search. Coverage is good for branded packaged goods (Wedel, Milka, Mutti, Prince Polo, Skyr…) and thin for supermarket private-labels (Biedronka, Lidl Pilos). For items missing on OFF, the response includes a `suggestion` URL to add them — the maintainer-recommended path, and additions flow back into wger via the next ingredient-sync.
 
 ## Configuring a client
 

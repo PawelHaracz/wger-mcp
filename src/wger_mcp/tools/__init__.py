@@ -14,6 +14,7 @@ from . import (
     body_weight,
     exercises,
     nutrition,
+    off,
     profile,
     routines,
     workout_logs,
@@ -27,6 +28,7 @@ _REGISTRARS = (
     nutrition.register,
     exercises.register,
     analytics.register,
+    off.register,
 )
 
 

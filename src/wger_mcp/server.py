@@ -64,7 +64,7 @@ def build_app(settings: Settings) -> Starlette:
     # problem: an outer Mount("/mcp/") would strip the prefix before routing,
     # leaving "" which never matches the inner Route("/mcp/") → 404.
     mcp_starlette = mcp.streamable_http_app()
-    routes = [Route("/health", healthcheck)] + list(mcp_starlette.routes)
+    routes = [Route("/health", healthcheck), *mcp_starlette.routes]
     app = Starlette(routes=routes, lifespan=lifespan)
     # Keep `/mcp` and `/mcp/` both as MCP entry points instead of issuing a 307
     # from one to the other — MCP clients (and curl) do not follow redirects on POST.

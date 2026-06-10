@@ -129,6 +129,12 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
+def _entry_reps(entry: dict[str, Any]) -> int:
+    # wger API returns "repetitions" (string e.g. "8.00"); older clients may send "reps"
+    raw = entry.get("repetitions") if entry.get("repetitions") is not None else entry.get("reps")
+    return int(_safe_float(raw))
+
+
 def register(mcp: FastMCP, client: WgerClient) -> None:
     @mcp.tool()
     async def weekly_summary(
@@ -152,7 +158,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             ex_id = entry.get("exercise") or entry.get("exercise_base")
             if ex_id is None:
                 continue
-            reps = entry.get("reps") or 0
+            reps = _entry_reps(entry)
             weight = _safe_float(entry.get("weight"))
             bucket = per_exercise[ex_id]
             bucket["sets"] += 1
@@ -203,7 +209,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         )
         for entry in logs:
             weight = _safe_float(entry.get("weight"))
-            reps = entry.get("reps") or 0
+            reps = _entry_reps(entry)
             d = entry.get("date") or ""
             b = sessions[d]
             b["sets"] += 1
@@ -253,7 +259,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             if ex_id is None:
                 continue
             weight = _safe_float(entry.get("weight"))
-            reps = entry.get("reps") or 0
+            reps = _entry_reps(entry)
             est_1rm = _epley(weight, reps)
             rec = per_ex.setdefault(
                 ex_id,
@@ -336,7 +342,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             if ex_id is None or not d_str:
                 continue
             weight = _safe_float(entry.get("weight"))
-            reps = entry.get("reps") or 0
+            reps = _entry_reps(entry)
             try:
                 d = date.fromisoformat(d_str)
             except ValueError:
@@ -426,7 +432,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
                 if ex_id is None:
                     continue
                 weight = _safe_float(entry.get("weight"))
-                reps = entry.get("reps") or 0
+                reps = _entry_reps(entry)
                 _accumulate(totals[period], reps, weight)
                 for group in _groups_for(ex_id, group_by, ex_cache):
                     _accumulate(per_period[period][group], reps, weight)

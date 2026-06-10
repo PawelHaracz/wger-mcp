@@ -63,17 +63,28 @@ def build_app(settings: Settings) -> Starlette:
     # Merging its routes into the top-level Starlette avoids the double-prefix
     # problem: an outer Mount("/mcp/") would strip the prefix before routing,
     # leaving "" which never matches the inner Route("/mcp/") → 404.
-    # We also register a trailing-slash twin of each MCP route so `/mcp` and
-    # `/mcp/` both hit the ASGI app — MCP clients (and curl) do not follow the
-    # 307 redirect_slashes would otherwise emit on POST.
+    # For every MCP route we also register its slash-twin (the same path with the
+    # trailing "/" toggled) so `/mcp` and `/mcp/` both hit the ASGI app no matter
+    # how MCP_PATH is written. MCP clients (and curl) do not follow the 307
+    # redirect_slashes would otherwise emit on POST, so a twin is required rather
+    # than a redirect.
     mcp_starlette = mcp.streamable_http_app()
     mcp_routes: list[Route] = []
+    seen_paths: set[str] = set()
     for route in mcp_starlette.routes:
         mcp_routes.append(route)
         path = getattr(route, "path", None)
+        if path:
+            seen_paths.add(path)
+    for route in list(mcp_routes):
+        path = getattr(route, "path", None)
         endpoint = getattr(route, "endpoint", None) or getattr(route, "app", None)
-        if path and endpoint and not path.endswith("/"):
-            mcp_routes.append(Route(path + "/", endpoint))
+        if not path or not endpoint:
+            continue
+        twin = path[:-1] if path.endswith("/") else path + "/"
+        if twin and twin not in seen_paths:
+            mcp_routes.append(Route(twin, endpoint))
+            seen_paths.add(twin)
     routes = [Route("/health", healthcheck), *mcp_routes]
     app = Starlette(routes=routes, lifespan=lifespan)
     app.router.redirect_slashes = False

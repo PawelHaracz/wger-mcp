@@ -63,11 +63,19 @@ def build_app(settings: Settings) -> Starlette:
     # Merging its routes into the top-level Starlette avoids the double-prefix
     # problem: an outer Mount("/mcp/") would strip the prefix before routing,
     # leaving "" which never matches the inner Route("/mcp/") → 404.
+    # We also register a trailing-slash twin of each MCP route so `/mcp` and
+    # `/mcp/` both hit the ASGI app — MCP clients (and curl) do not follow the
+    # 307 redirect_slashes would otherwise emit on POST.
     mcp_starlette = mcp.streamable_http_app()
-    routes = [Route("/health", healthcheck), *mcp_starlette.routes]
+    mcp_routes: list[Route] = []
+    for route in mcp_starlette.routes:
+        mcp_routes.append(route)
+        path = getattr(route, "path", None)
+        endpoint = getattr(route, "endpoint", None) or getattr(route, "app", None)
+        if path and endpoint and not path.endswith("/"):
+            mcp_routes.append(Route(path + "/", endpoint))
+    routes = [Route("/health", healthcheck), *mcp_routes]
     app = Starlette(routes=routes, lifespan=lifespan)
-    # Keep `/mcp` and `/mcp/` both as MCP entry points instead of issuing a 307
-    # from one to the other — MCP clients (and curl) do not follow redirects on POST.
     app.router.redirect_slashes = False
     auth_cls, auth_kwargs = build_auth_middleware(settings)
     app.add_middleware(auth_cls, **auth_kwargs)

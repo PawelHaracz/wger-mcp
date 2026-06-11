@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from ..wger_client import WgerClient, WgerError
-from .common import bad_request, err
+from .common import err
 
 
 def register(mcp: FastMCP, client: WgerClient) -> None:

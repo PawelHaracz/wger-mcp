@@ -140,16 +140,6 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def list_equipment(
-        limit: Annotated[int, Field(ge=1, le=500)] = 100,
-    ) -> list[dict[str, Any]]:
-        """List exercise equipment (Dumbbell, Barbell, …)."""
-        try:
-            return await client.paginate("equipment/", limit=limit)
-        except WgerError as exc:
-            return [err(exc)]
-
-    @mcp.tool()
     async def list_muscles(
         limit: Annotated[int, Field(ge=1, le=500)] = 100,
     ) -> list[dict[str, Any]]:

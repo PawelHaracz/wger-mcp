@@ -12,7 +12,9 @@ from ..wger_client import WgerClient
 from . import (
     analytics,
     body_weight,
+    equipment,
     exercises,
+    measurements,
     nutrition,
     off,
     profile,
@@ -25,6 +27,8 @@ _REGISTRARS = (
     routines.register,
     workout_logs.register,
     body_weight.register,
+    measurements.register,
+    equipment.register,
     nutrition.register,
     exercises.register,
     analytics.register,

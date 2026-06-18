@@ -37,7 +37,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def get_measurement_category(category_id: int) -> dict[str, Any]:
+    async def get_measurement_category(category_id: str) -> dict[str, Any]:
         """Fetch a single measurement category by ID."""
         try:
             return await client.get(f"measurement-category/{category_id}/")
@@ -46,7 +46,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_measurement_category(
-        category_id: int,
+        category_id: str,
         name: str | None = None,
         unit: Annotated[str | None, Field(max_length=10)] = None,
     ) -> dict[str, Any]:
@@ -64,7 +64,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_measurement_category(category_id: int) -> dict[str, Any]:
+    async def delete_measurement_category(category_id: str) -> dict[str, Any]:
         """Delete a measurement category and all its entries."""
         try:
             await client.delete(f"measurement-category/{category_id}/")
@@ -76,7 +76,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def list_measurements(
-        category_id: int | None = None,
+        category_id: str | None = None,
         limit: Annotated[int, Field(ge=1, le=500)] = 100,
     ) -> list[dict[str, Any]]:
         """List body measurement entries, optionally filtered by category."""
@@ -90,7 +90,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def log_measurement(
-        category_id: int,
+        category_id: str,
         value: Annotated[float, Field(gt=0)],
         when: date | None = None,
         notes: str | None = None,
@@ -109,7 +109,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def get_measurement(measurement_id: int) -> dict[str, Any]:
+    async def get_measurement(measurement_id: str) -> dict[str, Any]:
         """Fetch a single body measurement entry by ID."""
         try:
             return await client.get(f"measurement/{measurement_id}/")
@@ -118,7 +118,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_measurement(
-        measurement_id: int,
+        measurement_id: str,
         value: Annotated[float | None, Field(gt=0)] = None,
         when: date | None = None,
         notes: str | None = None,
@@ -139,7 +139,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_measurement(measurement_id: int) -> dict[str, Any]:
+    async def delete_measurement(measurement_id: str) -> dict[str, Any]:
         """Delete a body measurement entry."""
         try:
             await client.delete(f"measurement/{measurement_id}/")

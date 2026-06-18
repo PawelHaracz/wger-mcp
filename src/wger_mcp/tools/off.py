@@ -3,8 +3,10 @@
 OFF is a free, community-maintained food database (~3.6 M products) with rich
 Polish coverage. Use these tools when you have an EAN/UPC barcode and want
 macros — much more precise than name search. Output includes a
-`wger_ingredient_payload` field that can be fed straight into the wger
-``create_ingredient`` tool.
+`wger_ingredient_payload` field: a normalised per-100 g macro structure (kept
+for convenience / downstream use). Note that submitting custom ingredients to
+wger from the MCP is not supported — wger's REST `/ingredient/` is read-only,
+and the old web-form path was dropped with the move to multi-user auth.
 """
 
 from __future__ import annotations
@@ -146,9 +148,9 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
     ) -> dict[str, Any]:
         """Look up an EAN/UPC/GTIN barcode on Open Food Facts.
 
-        Returns macros per 100 g plus a ``wger_ingredient_payload`` ready to
-        pass to ``create_ingredient`` (kwarg names match). Polish product name
-        and ingredients text are preferred when present.
+        Returns macros per 100 g plus a ``wger_ingredient_payload`` (normalised
+        per-100 g macros, informational). Polish product name and ingredients
+        text are preferred when present.
 
         Salt vs sodium: OFF stores salt only; if sodium is missing we derive
         ``sodium = salt / 2.5`` (the standard conversion).

@@ -1,4 +1,4 @@
-"""Tests for WgerClient: pagination, auth header, error mapping."""
+"""Tests for WgerClient: pagination, per-request auth header, error mapping."""
 
 from __future__ import annotations
 
@@ -10,20 +10,39 @@ from wger_mcp.wger_client import WgerClient, WgerError
 BASE = "https://wger.test/api/v2"
 
 
+class _StubProvider:
+    """Minimal WgerTokenProvider stand-in returning a fixed header."""
+
+    def __init__(self, header: str = "Token my-token") -> None:
+        self._header = header
+        self.calls = 0
+
+    async def authorization_header(self) -> str:
+        self.calls += 1
+        return self._header
+
+    async def aclose(self) -> None:
+        pass
+
+
+def _client(header: str = "Token my-token") -> WgerClient:
+    return WgerClient(BASE, _StubProvider(header))
+
+
 @pytest.mark.asyncio
 async def test_auth_header_sent() -> None:
-    async with WgerClient(BASE, "my-token") as c:
+    async with _client("Bearer wger-jwt") as c:
         with respx.mock(base_url=BASE) as router:
             route = router.get("/userprofile/").respond(json={"id": 1})
             await c.get("userprofile/")
             assert route.call_count == 1
             sent = route.calls.last.request
-            assert sent.headers["authorization"] == "Token my-token"
+            assert sent.headers["authorization"] == "Bearer wger-jwt"
 
 
 @pytest.mark.asyncio
 async def test_error_raises_wger_error() -> None:
-    async with WgerClient(BASE, "t") as c, respx.mock(base_url=BASE) as router:
+    async with _client() as c, respx.mock(base_url=BASE) as router:
         router.get("/userprofile/").respond(status_code=403, json={"detail": "nope"})
         with pytest.raises(WgerError) as exc:
             await c.get("userprofile/")
@@ -33,7 +52,7 @@ async def test_error_raises_wger_error() -> None:
 
 @pytest.mark.asyncio
 async def test_paginate_walks_next() -> None:
-    async with WgerClient(BASE, "t") as c, respx.mock() as router:
+    async with _client() as c, respx.mock() as router:
         router.get(f"{BASE}/workoutlog/", params={"page": "2"}).respond(
             json={
                 "count": 3,
@@ -55,8 +74,26 @@ async def test_paginate_walks_next() -> None:
 
 
 @pytest.mark.asyncio
+async def test_paginate_page_fetch_carries_auth() -> None:
+    """Fanned-out page fetches must carry the per-request credential too."""
+    async with _client("Bearer wger-jwt") as c, respx.mock() as router:
+        page2 = router.get(f"{BASE}/workoutlog/", params={"page": "2"}).respond(
+            json={"count": 3, "next": None, "results": [{"id": 3}]}
+        )
+        router.get(f"{BASE}/workoutlog/").respond(
+            json={
+                "count": 3,
+                "next": f"{BASE}/workoutlog/?page=2",
+                "results": [{"id": 1}, {"id": 2}],
+            }
+        )
+        await c.paginate("workoutlog/")
+        assert page2.calls.last.request.headers["authorization"] == "Bearer wger-jwt"
+
+
+@pytest.mark.asyncio
 async def test_paginate_respects_limit() -> None:
-    async with WgerClient(BASE, "t") as c, respx.mock() as router:
+    async with _client() as c, respx.mock() as router:
         router.get(f"{BASE}/workoutlog/").respond(
             json={"results": [{"id": i} for i in range(5)], "next": None}
         )
@@ -66,7 +103,7 @@ async def test_paginate_respects_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_204_returns_none() -> None:
-    async with WgerClient(BASE, "t") as c, respx.mock(base_url=BASE) as router:
+    async with _client() as c, respx.mock(base_url=BASE) as router:
         router.delete("/weightentry/42/").respond(status_code=204)
         result = await c.delete("weightentry/42/")
         assert result is None

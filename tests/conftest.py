@@ -16,28 +16,45 @@ ISSUER = "https://idp.test/realms/test"
 AUDIENCE = "wger-mcp-test"
 JWKS_URI = f"{ISSUER}/protocol/openid-connect/certs"
 
+# Env that, with MCP_AUTH=oidc, satisfies config validation. Explicit JWKS/token
+# endpoints skip the discovery network call. Tests override via make_client().
+OIDC_ENV = {
+    "MCP_AUTH": "oidc",
+    "OIDC_ISSUER": ISSUER,
+    "OIDC_JWKS_URI": JWKS_URI,
+    "OIDC_TOKEN_ENDPOINT": f"{ISSUER}/protocol/openid-connect/token",
+    "OIDC_CLIENT_ID": "wger-mcp",
+    "OIDC_CLIENT_SECRET": "shh",
+    "WGER_OIDC_AUDIENCE": "wger",
+    "MCP_OIDC_AUDIENCE": AUDIENCE,
+    "MCP_OIDC_USERNAME_CLAIM": "preferred_username",
+    "MCP_OIDC_ALLOWED_USERS": "alice",
+}
+
+_CLEARED_VARS = (
+    "MCP_AUTH",
+    "OIDC_ISSUER",
+    "OIDC_JWKS_URI",
+    "OIDC_TOKEN_ENDPOINT",
+    "OIDC_CLIENT_ID",
+    "OIDC_CLIENT_SECRET",
+    "WGER_OIDC_AUDIENCE",
+    "WGER_ALLAUTH_PROVIDER",
+    "MCP_OIDC_AUDIENCE",
+    "MCP_OIDC_ALGORITHMS",
+    "MCP_OIDC_USERNAME_CLAIM",
+    "MCP_OIDC_ALLOWED_USERS",
+    "WGER_DEV_TOKEN",
+    "MCP_PUBLIC_URL",
+    "ALLOWED_HOSTS",
+)
+
 
 @pytest.fixture(autouse=True)
 def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Common upstream config. Each test then sets MCP_AUTH and friends."""
     monkeypatch.setenv("WGER_BASE_URL", "https://wger.test")
-    monkeypatch.setenv("WGER_API_TOKEN", "wger-token")
-    monkeypatch.delenv("MCP_AUTH", raising=False)
-    for var in (
-        "MCP_API_KEYS",
-        "MCP_API_KEY_HEADER",
-        "MCP_JWT_JWKS_URI",
-        "MCP_JWT_ISSUER",
-        "MCP_JWT_AUDIENCE",
-        "MCP_JWT_ALGORITHMS",
-        "MCP_JWT_USERNAME_CLAIM",
-        "MCP_JWT_ALLOWED_USERS",
-        "MCP_PROXY_USER_HEADER",
-        "MCP_PROXY_EMAIL_HEADER",
-        "MCP_PROXY_TRUSTED_IPS",
-        "MCP_PROXY_ALLOWED_USERS",
-        "ALLOWED_HOSTS",
-    ):
+    for var in _CLEARED_VARS:
         monkeypatch.delenv(var, raising=False)
 
 
@@ -85,24 +102,7 @@ def mock_jwks(jwks_dict: dict[str, Any]) -> Iterator[respx.MockRouter]:
         yield router
 
 
-class _ClientIPOverride:
-    """ASGI shim that rewrites ``scope['client']`` so peer-IP checks see a real address.
-
-    Starlette's TestClient uses ``("testclient", 50000)`` by default, which doesn't
-    match real IP/CIDR rules. Tests can pass ``peer_ip=`` to inject a believable peer.
-    """
-
-    def __init__(self, app, peer_ip: str) -> None:
-        self.app = app
-        self.peer_ip = peer_ip
-
-    async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] == "http":
-            scope = {**scope, "client": (self.peer_ip, 12345)}
-        await self.app(scope, receive, send)
-
-
-def make_client(*, peer_ip: str = "127.0.0.1", **overrides: str) -> TestClient:
+def make_client(**overrides: str) -> TestClient:
     """Build a TestClient with the given env overrides applied to the current process."""
     import os
 
@@ -113,4 +113,4 @@ def make_client(*, peer_ip: str = "127.0.0.1", **overrides: str) -> TestClient:
     from wger_mcp.server import build_app
 
     app = build_app(load_settings())
-    return TestClient(_ClientIPOverride(app, peer_ip), base_url="http://localhost")
+    return TestClient(app, base_url="http://localhost")

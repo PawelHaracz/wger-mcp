@@ -1,12 +1,20 @@
-"""Thin async wrapper around wger REST API v2."""
+"""Thin async wrapper around wger REST API v2.
+
+Outbound auth is resolved **per request** from a
+:class:`~wger_mcp.auth.exchange.WgerTokenProvider`: the caller's identity
+(bound to the request context) determines which wger account the call acts as.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
+
+if TYPE_CHECKING:
+    from .auth.exchange import WgerTokenProvider
 
 PAGINATE_CONCURRENCY = 8
 
@@ -19,29 +27,33 @@ class WgerError(RuntimeError):
 
 
 class WgerClient:
-    def __init__(self, base_url: str, token: str, *, timeout: float = 20.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token_provider: WgerTokenProvider,
+        *,
+        timeout: float = 20.0,
+    ) -> None:
+        self._token_provider = token_provider
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
             headers={
-                "Authorization": f"Token {token}",
                 "Accept": "application/json",
-                "User-Agent": "wger-mcp/0.1",
+                "User-Agent": "wger-mcp/0.2",
             },
         )
-        # Optional Django session client for endpoints not exposed via REST
-        # (e.g. custom-ingredient form submission). Set by server.build_app
-        # when WGER_USERNAME / WGER_PASSWORD are configured.
-        self.session: Any = None
         # Extra httpx clients owned by tool modules (e.g. Open Food Facts).
         # Tool modules append on register(); we close them on shutdown.
         self._extra_clients: list[httpx.AsyncClient] = []
 
+    async def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": await self._token_provider.authorization_header()}
+
     async def aclose(self) -> None:
         for extra in self._extra_clients:
             await extra.aclose()
-        if self.session is not None:
-            await self.session.aclose()
+        await self._token_provider.aclose()
         await self._client.aclose()
 
     async def __aenter__(self) -> WgerClient:
@@ -51,7 +63,8 @@ class WgerClient:
         await self.aclose()
 
     async def _request(self, method: str, path: str, **kw: Any) -> Any:
-        resp = await self._client.request(method, path.lstrip("/"), **kw)
+        headers = {**(kw.pop("headers", None) or {}), **(await self._auth_headers())}
+        resp = await self._client.request(method, path.lstrip("/"), headers=headers, **kw)
         if resp.status_code >= 400:
             try:
                 body = resp.json()
@@ -90,12 +103,15 @@ class WgerClient:
         if not next_url or len(results) >= limit:
             return results[:limit]
 
+        # Identity is fixed for the duration of one paginate call; resolve the
+        # outbound credential once and reuse it for the fanned-out page fetches.
+        auth = await self._auth_headers()
         page_size = len(first["results"])
         extra_urls = _plan_remaining_pages(
             next_url, first.get("count"), page_size, limit, already=len(results)
         )
         if extra_urls is None:
-            return await self._paginate_serial(next_url, results, limit)
+            return await self._paginate_serial(next_url, results, limit, auth)
         if not extra_urls:
             return results[:limit]
 
@@ -103,7 +119,7 @@ class WgerClient:
 
         async def _fetch(url: str) -> list:
             async with sem:
-                resp = await self._client.get(url)
+                resp = await self._client.get(url, headers=auth)
             if resp.status_code >= 400:
                 return []
             data = resp.json()
@@ -114,9 +130,11 @@ class WgerClient:
             results.extend(page)
         return results[:limit]
 
-    async def _paginate_serial(self, next_url: str, results: list, limit: int) -> list:
+    async def _paginate_serial(
+        self, next_url: str, results: list, limit: int, auth: dict[str, str]
+    ) -> list:
         while next_url and len(results) < limit:
-            resp = await self._client.get(next_url)
+            resp = await self._client.get(next_url, headers=auth)
             if resp.status_code >= 400:
                 break
             page = resp.json()

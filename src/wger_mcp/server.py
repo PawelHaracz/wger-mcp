@@ -17,11 +17,15 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .auth import build_auth_middleware
+from .auth import (
+    WELL_KNOWN_PATH,
+    build_auth_middleware,
+    build_token_provider,
+    protected_resource_metadata,
+)
 from .config import Settings, load_settings
 from .tools import register_all
 from .wger_client import WgerClient
-from .wger_session import WgerSession
 
 log = logging.getLogger("wger_mcp")
 
@@ -38,14 +42,7 @@ def build_app(settings: Settings) -> Starlette:
         transport_security=transport_security,
     )
 
-    client = WgerClient(settings.wger_api_root, settings.wger_api_token)
-    if settings.wger_username and settings.wger_password:
-        client.session = WgerSession(
-            str(settings.wger_base_url).rstrip("/"),
-            settings.wger_username,
-            settings.wger_password,
-            lang=settings.wger_web_lang,
-        )
+    client = WgerClient(settings.wger_api_root, build_token_provider(settings))
     register_all(mcp, client)
 
     @contextlib.asynccontextmanager
@@ -58,6 +55,9 @@ def build_app(settings: Settings) -> Starlette:
 
     async def healthcheck(_: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
+
+    async def oauth_metadata(_: Request) -> JSONResponse:
+        return JSONResponse(protected_resource_metadata(settings))
 
     # streamable_http_app() registers Route(mcp_path, ...) internally.
     # Merging its routes into the top-level Starlette avoids the double-prefix
@@ -86,6 +86,11 @@ def build_app(settings: Settings) -> Starlette:
             mcp_routes.append(Route(twin, endpoint))
             seen_paths.add(twin)
     routes = [Route("/health", healthcheck), *mcp_routes]
+    # OAuth-protected-resource metadata lets interactive MCP clients discover
+    # the SSO IdP as the authorization server. Only meaningful when OIDC is in
+    # play (the 'none' dev mode has no issuer).
+    if settings.oidc_issuer is not None:
+        routes.append(Route(WELL_KNOWN_PATH, oauth_metadata))
     app = Starlette(routes=routes, lifespan=lifespan)
     app.router.redirect_slashes = False
     auth_cls, auth_kwargs = build_auth_middleware(settings)

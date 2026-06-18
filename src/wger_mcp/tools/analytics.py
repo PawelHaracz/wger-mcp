@@ -37,7 +37,7 @@ def _bucket_start(d: date, bucket: str) -> str:
 
 
 def _groups_for(
-    ex_id: int, group_by: str, ex_cache: dict[int, dict[str, Any]]
+    ex_id: str, group_by: str, ex_cache: dict[int, dict[str, Any]]
 ) -> list[tuple[int, str] | None]:
     if group_by == "none":
         return [None]
@@ -189,7 +189,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def exercise_history(
-        exercise_id: int,
+        exercise_id: str,
         days: Annotated[int, Field(ge=1, le=730)] = 90,
         limit: Annotated[int, Field(ge=1, le=2000)] = 500,
     ) -> dict[str, Any]:
@@ -238,7 +238,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def personal_records(
-        exercise_id: int | None = None,
+        exercise_id: str | None = None,
         days: Annotated[int, Field(ge=1, le=3650)] = 730,
     ) -> dict[str, Any]:
         """Compute PRs from workout logs: max weight, max reps, best
@@ -315,7 +315,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         bucket: str = "week",
         metrics: list[str] | None = None,
         group_by: str = "none",
-        exercise_id: int | None = None,
+        exercise_id: str | None = None,
     ) -> dict[str, Any]:
         """Time-bucketed training volume. bucket=day|week|month. group_by=
         none|exercise|muscle|category. For muscle, exercise volume is

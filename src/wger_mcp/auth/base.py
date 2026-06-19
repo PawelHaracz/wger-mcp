@@ -7,13 +7,20 @@ import logging
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .identity import Identity, reset_identity, set_identity
+
 log = logging.getLogger(__name__)
 
 _BYPASS_EXACT = {"/health"}
 
 
 def is_bypass_path(path: str) -> bool:
-    return path in _BYPASS_EXACT or path.startswith("/health/")
+    """Public paths that skip auth: health checks and OAuth discovery metadata."""
+    return (
+        path in _BYPASS_EXACT
+        or path.startswith("/health/")
+        or path.startswith("/.well-known/")
+    )
 
 
 async def reply_unauthorized(
@@ -27,22 +34,23 @@ async def reply_unauthorized(
     await resp(scope, receive, send)
 
 
-def set_identity(scope: Scope, *, strategy: str, user: str | None, **extra: object) -> None:
-    state = scope.setdefault("state", {})
-    state["mcp_auth"] = strategy
-    state["mcp_user"] = user
-    for k, v in extra.items():
-        state[f"mcp_{k}"] = v
-
-
 class NoAuthMiddleware:
-    """No-op middleware. Use only for local dev."""
+    """No-op middleware. Use only for local dev (``MCP_AUTH=none``).
+
+    Binds a fixed dev :class:`Identity`; the wger client then uses the static
+    ``WGER_DEV_TOKEN`` for outbound calls.
+    """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
         log.warning("MCP_AUTH=none — incoming requests are NOT authenticated")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            set_identity(scope, strategy="none", user=None)
-        await self.app(scope, receive, send)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        token = set_identity(Identity(subject="local-dev", username="local-dev", strategy="none"))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_identity(token)

@@ -42,7 +42,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_body_weight_entry(
-        entry_id: int,
+        entry_id: str,
         weight_kg: Annotated[float | None, Field(gt=0, le=500)] = None,
         when: date | None = None,
     ) -> dict[str, Any]:
@@ -60,7 +60,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_body_weight_entry(entry_id: int) -> dict[str, Any]:
+    async def delete_body_weight_entry(entry_id: str) -> dict[str, Any]:
         """Delete a body-weight entry."""
         try:
             await client.delete(f"weightentry/{entry_id}/")

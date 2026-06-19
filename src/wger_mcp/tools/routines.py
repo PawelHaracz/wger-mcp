@@ -47,7 +47,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def get_routine(routine_id: int) -> dict[str, Any]:
+    async def get_routine(routine_id: str) -> dict[str, Any]:
         """Fetch a single routine with its day structure."""
         try:
             return await client.get(f"routine/{routine_id}/")
@@ -56,7 +56,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def list_routine_days(
-        routine_id: int,
+        routine_id: str,
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> list[dict[str, Any]]:
         """List training days of a routine."""
@@ -68,7 +68,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def get_routine_day(day_id: int) -> dict[str, Any]:
+    async def get_routine_day(day_id: str) -> dict[str, Any]:
         """Fetch a single training day."""
         try:
             return await client.get(f"day/{day_id}/")
@@ -77,7 +77,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def list_slots(
-        day_id: int,
+        day_id: str,
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> list[dict[str, Any]]:
         """List slots in a training day."""
@@ -90,7 +90,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def list_slot_entries(
-        slot_id: int,
+        slot_id: str,
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> list[dict[str, Any]]:
         """List exercise entries in a slot."""
@@ -102,7 +102,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def get_slot_entry(entry_id: int) -> dict[str, Any]:
+    async def get_slot_entry(entry_id: str) -> dict[str, Any]:
         """Fetch a slot entry. Note: per-set sets/reps/weight/rir/rest are stored
         on separate *-config endpoints linked by slot_entry, not on the entry
         itself. Use list_slot_entry_configs to read them."""
@@ -113,7 +113,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def list_slot_entry_configs(
-        slot_entry_id: int,
+        slot_entry_id: str,
         kinds: list[str] | None = None,
     ) -> dict[str, Any]:
         """Fetch per-iteration configs for a slot entry. kinds filters which
@@ -163,7 +163,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_routine(
-        routine_id: int,
+        routine_id: str,
         name: str | None = None,
         description: str | None = None,
         start: date | None = None,
@@ -191,7 +191,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def add_routine_day(
-        routine_id: int,
+        routine_id: str,
         name: Annotated[str, Field(min_length=1, max_length=255)],
         order: Annotated[int, Field(ge=1, le=100)],
         description: str = "",
@@ -214,7 +214,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def add_slot_to_day(
-        day_id: int,
+        day_id: str,
         order: Annotated[int, Field(ge=1, le=100)],
         sets: Annotated[int | None, Field(ge=1, le=50)] = None,
         rest_seconds: Annotated[int | None, Field(ge=0, le=3600)] = None,
@@ -232,7 +232,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_routine_day(
-        day_id: int,
+        day_id: str,
         name: str | None = None,
         order: Annotated[int | None, Field(ge=1, le=100)] = None,
         description: str | None = None,
@@ -260,7 +260,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_slot(
-        slot_id: int,
+        slot_id: str,
         order: Annotated[int | None, Field(ge=1, le=100)] = None,
         sets: Annotated[int | None, Field(ge=1, le=50)] = None,
         rest_seconds: Annotated[int | None, Field(ge=0, le=3600)] = None,
@@ -285,8 +285,8 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_slot_entry(
-        slot_entry_id: int,
-        exercise_id: int | None = None,
+        slot_entry_id: str,
+        exercise_id: str | None = None,
         order: Annotated[int | None, Field(ge=1, le=100)] = None,
         comment: str | None = None,
         repetition_unit: int | None = None,
@@ -314,7 +314,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
     @mcp.tool()
     async def update_slot_entry_config(
         kind: str,
-        config_id: int,
+        config_id: str,
         value: float | None = None,
         iteration: Annotated[int | None, Field(ge=1, le=1000)] = None,
         operation: str | None = None,
@@ -346,7 +346,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_slot_entry_config(kind: str, config_id: int) -> dict[str, Any]:
+    async def delete_slot_entry_config(kind: str, config_id: str) -> dict[str, Any]:
         """Delete a per-iteration config record."""
         path = SLOT_CONFIG_PATHS.get(kind)
         if not path:
@@ -358,7 +358,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_routine(routine_id: int) -> dict[str, Any]:
+    async def delete_routine(routine_id: str) -> dict[str, Any]:
         """Delete a routine and its entire day/slot/entry tree."""
         try:
             await client.delete(f"routine/{routine_id}/")
@@ -367,7 +367,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_routine_day(day_id: int) -> dict[str, Any]:
+    async def delete_routine_day(day_id: str) -> dict[str, Any]:
         """Delete a training day (cascades to its slots and entries)."""
         try:
             await client.delete(f"day/{day_id}/")
@@ -376,7 +376,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_slot(slot_id: int) -> dict[str, Any]:
+    async def delete_slot(slot_id: str) -> dict[str, Any]:
         """Delete a slot (cascades to its entries and configs)."""
         try:
             await client.delete(f"slot/{slot_id}/")
@@ -385,7 +385,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_slot_entry(slot_entry_id: int) -> dict[str, Any]:
+    async def delete_slot_entry(slot_entry_id: str) -> dict[str, Any]:
         """Delete a slot entry (the exercise binding) and its configs."""
         try:
             await client.delete(f"slot-entry/{slot_entry_id}/")
@@ -395,8 +395,8 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def attach_exercise_to_slot(
-        slot_id: int,
-        exercise_id: int,
+        slot_id: str,
+        exercise_id: str,
         order: Annotated[int, Field(ge=1, le=100)] = 1,
         repetition_unit: int | None = None,
         weight_unit: int | None = None,
@@ -422,7 +422,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def set_slot_entry_config(
-        slot_entry_id: int,
+        slot_entry_id: str,
         kind: str,
         value: float,
         iteration: Annotated[int, Field(ge=1, le=1000)] = 1,
@@ -452,8 +452,8 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def add_exercise_with_sets(
-        day_id: int,
-        exercise_id: int,
+        day_id: str,
+        exercise_id: str,
         sets: Annotated[int, Field(ge=1, le=50)],
         reps: Annotated[int, Field(ge=1, le=1000)],
         weight_kg: Annotated[float, Field(ge=0, le=1000)],

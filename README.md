@@ -1,100 +1,74 @@
 # wger-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that exposes the [wger](https://wger.de) fitness/nutrition REST API as tools (routines, workout logging, exercise & ingredient catalog, nutrition plans + meals + recipes, custom ingredients, diary, body-weight tracking, volume/PR analytics, daily calorie calculator, …) so that AI assistants can read and write your wger data.
+An [MCP](https://modelcontextprotocol.io) server that exposes the [wger](https://wger.de) (>= 2.6) fitness/nutrition REST API as tools (routines, workout logging, exercise & ingredient catalog, nutrition plans + meals + recipes, diary, body-weight tracking, gym equipment, body measurements, volume/PR analytics, daily calorie calculator, …) so that AI assistants can read and write your wger data.
 
 - **Transport:** MCP **Streamable HTTP** (FastMCP).
-- **Inbound auth:** pluggable — static API key, generic OIDC JWT, or trusted reverse-proxy header. No vendor lock-in to a specific IdP.
-- **Outbound auth:** wger DRF API token (single-user model).
+- **Auth:** **multi-user via OIDC SSO** — any OIDC IdP (Keycloak, Authentik, Auth0, Okta, …). Every request acts as the calling user's own wger account.
+
+## How auth works
+
+wger 2.6 added OIDC SSO (allauth) and issues its own JWTs; its REST API only accepts wger-native credentials. So this server is **multi-user** and uses a shared OIDC identity provider (the same one wger logs in with). Per request:
+
+```text
+client → MCP    Authorization: Bearer <OIDC token>   (via MCP-native OAuth, or sent directly)
+MCP             validates the token against the IdP's JWKS
+MCP → IdP       RFC 8693 token-exchange → access_token aud'd at wger's OIDC client
+MCP → wger      POST /allauth/app/v1/auth/provider/token  → a wger JWT
+MCP → wger      Authorization: Bearer <wger JWT>  on /api/v2/*   (cached ~5 min per user)
+```
+
+Provider-agnostic: JWKS/token endpoints come from the IdP's discovery document (`{issuer}/.well-known/openid-configuration`). No per-user secrets are stored — the wger access token is cached in memory and re-derived on expiry. See [docs/adr/0001-multi-user-auth-via-oidc-token-exchange.md](docs/adr/0001-multi-user-auth-via-oidc-token-exchange.md).
 
 ## Quick start
 
 ```bash
 uv sync
 cp .env.example .env
-# Edit .env: set WGER_BASE_URL, WGER_API_TOKEN, and one auth strategy.
+# Edit .env: set WGER_BASE_URL, OIDC_ISSUER, OIDC_CLIENT_ID/SECRET, WGER_OIDC_AUDIENCE.
 uv run wger-mcp
 ```
 
 Server listens on `http://0.0.0.0:8765`, MCP endpoint at `/mcp`.
 
-## Two credentials, two roles
+## Prerequisites at the IdP & wger
 
-`wger-mcp` deals with two unrelated credentials. Mixing them up is the #1 source of `401`s:
-
-- `WGER_API_TOKEN` — wger's DRF token, used **outbound** by the MCP server to call the wger REST API.
-- `MCP_API_KEYS` — only when `MCP_AUTH=api_key`; used by **inbound** clients (Claude Desktop, scripts, …) to authenticate to MCP.
-
-See [docs/api-keys.md](docs/api-keys.md) for how to generate, rotate, and why these are separate.
+- **wger** is configured with your IdP as an OIDC social-login provider (`WGER_SOCIAL_PROVIDERS`), so `provider/token` accepts its tokens. `WGER_ALLAUTH_PROVIDER` must match wger's provider id — the slug in wger's `SocialApp` (e.g. `keycloak` or `openid_connect`); it's the `<id>` in the OAuth callback path `/account/oidc/<id>/login/callback/`.
+- **IdP** has a *confidential* client for this server (`OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET`) with **token-exchange (RFC 8693)** enabled and permitted to exchange to wger's client audience (`WGER_OIDC_AUDIENCE`). On Keycloak that means enabling *Standard Token Exchange* and adding an *Audience* mapper that includes the wger client (otherwise the exchange fails with `Requested audience not available`).
+- **MFA is delegated to the IdP.** wger 2.6's headless `provider/token` enforces *wger-side* MFA: a user with a TOTP/WebAuthn authenticator enrolled **in wger** cannot complete the server-side login (no setting skips it). Users must rely on the IdP for MFA and **not** enroll wger-side 2FA. If wger-enforced MFA is a hard requirement, use per-user wger API keys instead of this exchange model.
 
 ## Inbound auth strategies
 
-Pick one with `MCP_AUTH=`. The server gates **every** request to `/mcp/*` according to that strategy. `/health` is always public.
+Pick one with `MCP_AUTH=`. The server gates **every** request to `/mcp/*`. `/health` and `/.well-known/*` are always public.
 
-### 1. `api_key` — simplest, recommended for personal / single-user
+### `oidc` (default)
 
-A static shared secret. Generated once and stored on every client.
-
-```ini
-MCP_AUTH=api_key
-MCP_API_KEYS=$(openssl rand -hex 32)
-# Optional, default is X-API-Key
-MCP_API_KEY_HEADER=X-API-Key
-```
-
-Clients send it as either:
-
-- `Authorization: Bearer <key>`
-- `X-API-Key: <key>` (or your custom header name)
-
-Multiple keys can be configured (rotation, multiple clients) by passing comma-separated values.
-
-### 2. `jwt` — any OIDC/OAuth2 provider
-
-Validates a Bearer JWT against a JWKS endpoint. Provider-agnostic.
+Validates an IdP-issued Bearer token against the IdP's JWKS, then exchanges it for a wger credential (see *How auth works*).
 
 ```ini
-MCP_AUTH=jwt
-MCP_JWT_JWKS_URI=https://idp.example.com/.well-known/jwks.json
-MCP_JWT_ISSUER=https://idp.example.com
-MCP_JWT_AUDIENCE=wger-mcp                 # optional
-MCP_JWT_ALGORITHMS=RS256                  # comma-separated, default RS256
-MCP_JWT_USERNAME_CLAIM=preferred_username # which claim names the user
-MCP_JWT_ALLOWED_USERS=alice,bob           # optional allowlist
+MCP_AUTH=oidc
+OIDC_ISSUER=https://idp.example.com/realms/main   # or https://tenant.auth0.com/
+MCP_OIDC_USERNAME_CLAIM=preferred_username  # which claim names the user
+#MCP_OIDC_AUDIENCE=wger-mcp                  # if set, inbound aud/azp must match
+#MCP_OIDC_ALLOWED_USERS=alice,bob            # optional allowlist
+
+# This server as a confidential OIDC client (token-exchange):
+OIDC_CLIENT_ID=wger-mcp
+OIDC_CLIENT_SECRET=...
+WGER_OIDC_AUDIENCE=wger                      # = wger's OIDC client id at the IdP
+WGER_ALLAUTH_PROVIDER=openid_connect         # wger's allauth provider id (slug)
 ```
 
-Verified: signature (via JWKS), `iss`, `exp`, and `aud` if `MCP_JWT_AUDIENCE` is set. JWKS is cached for `MCP_JWT_JWKS_TTL_SECONDS` (default 3600 s) and re-fetched on signature failure to handle key rotation.
+JWKS and token endpoints are resolved from the IdP's discovery document (override with `OIDC_JWKS_URI` / `OIDC_TOKEN_ENDPOINT`). Verified on the inbound token: signature (via JWKS), `iss`, `exp`, and — if `MCP_OIDC_AUDIENCE` is set — `aud` (or `azp`, which some IdPs use). JWKS is cached for `MCP_JWKS_TTL_SECONDS` (default 3600 s) and re-fetched on signature failure to handle key rotation.
 
-Provider examples:
+Interactive MCP clients discover the IdP via OAuth Protected Resource Metadata at `/.well-known/oauth-protected-resource` (a `401` also advertises it in `WWW-Authenticate`). Set `MCP_PUBLIC_URL` to the externally reachable base URL so the advertised resource identifier is correct.
 
-| Provider | `MCP_JWT_JWKS_URI` | `MCP_JWT_USERNAME_CLAIM` |
-|----------|--------------------|--------------------------|
-| Keycloak | `https://<host>/realms/<realm>/protocol/openid-connect/certs` | `preferred_username` |
-| Authentik | `https://<host>/application/o/<slug>/jwks/` | `preferred_username` |
-| Authelia (OIDC) | `https://<host>/jwks.json` | `preferred_username` |
-| Auth0 | `https://<tenant>.auth0.com/.well-known/jwks.json` | `sub` |
-| Okta | `https://<tenant>.okta.com/oauth2/default/v1/keys` | `sub` |
-| AWS Cognito | `https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/jwks.json` | `cognito:username` |
+### `none` — local dev only
 
-### 3. `proxy_header` — sit behind your existing SSO proxy
-
-Mirrors wger's own [AUTH_PROXY_HEADER](https://wger-project.github.io/docs/administration/auth_proxy.html) model. A reverse proxy (nginx, Caddy, Apache, Traefik) authenticates the user (Authelia, Authentik, oauth2-proxy in front of any OIDC IdP, LDAP, SAML, mutual TLS, …) and forwards an identity header.
-
-```ini
-MCP_AUTH=proxy_header
-MCP_PROXY_USER_HEADER=X-Remote-User
-MCP_PROXY_EMAIL_HEADER=X-Remote-Email     # optional
-MCP_PROXY_TRUSTED_IPS=127.0.0.1,10.0.0.0/8
-MCP_PROXY_ALLOWED_USERS=alice             # optional allowlist
-```
-
-Safety: requests are accepted **only** when the immediate peer IP (`scope['client']`) is in `MCP_PROXY_TRUSTED_IPS`. If you have additional proxies in front (CDN, k8s ingress, …), terminate that chain so the trusted proxy is the direct peer. `X-Forwarded-For` is intentionally not consulted.
-
-### 4. `none` — local dev only
-
-Disables auth entirely. The server logs a warning at startup. Do not expose to a network.
+Disables inbound auth and calls wger with a static personal DRF key (Settings → API → "API key"). The server logs a warning at startup. Do not expose to a network.
 
 ```ini
 MCP_AUTH=none
+WGER_DEV_TOKEN=<your personal wger API key>
 ```
 
 ## Tools
@@ -105,7 +79,7 @@ Tools are grouped by domain. Each lives in its own module under [`src/wger_mcp/t
 
 | Tool | Description |
 |------|-------------|
-| `whoami` | Show wger user profile bound to the configured API token |
+| `whoami` | Show the wger user profile of the authenticated caller |
 | `update_user_profile(calories?, height_cm?, birthdate?, gender?, sleep_hours?, work_hours?, work_intensity?, sport_hours?, sport_intensity?, freetime_hours?, freetime_intensity?)` | Patch the wger profile (e.g. write your calorie target) |
 
 ### Routines (training plan tree)
@@ -151,19 +125,18 @@ Tools are grouped by domain. Each lives in its own module under [`src/wger_mcp/t
 |------|-------------|
 | `search_exercises(query, language, limit)` | Find exercises by name (ISO 639-1 language code) |
 | `search_exercises_by_filter(equipment_id?, muscle_id?, category_id?, language?, limit?)` | Structured lookup (e.g. Dumbbell + Back) |
-| `get_exercise(id)` | Full exercise detail: muscles, equipment, instructions |
+| `get_exercise(id)` | Full exercise detail: muscles, equipment, instructions, images (with 2.6 `small`/`medium` thumbnails) |
 | `list_categories` / `list_equipment` / `list_muscles` | Reference data |
 
 ### Ingredients
 
 | Tool | Description |
 |------|-------------|
-| `search_ingredients(query, language, limit)` | Find foods by name |
+| `search_ingredients(query, language, limit, nutriscore?, nutriscore_better_than?, nutriscore_at_worst?)` | Find foods by name. Optional Nutri-Score filters (wger 2.6): exact grade, or `nutriscore_better_than='C'` (A/B only), or `nutriscore_at_worst='C'` (C or better) |
 | `search_ingredient_by_barcode(barcode, limit?)` | Exact lookup by EAN/UPC (`?code=`) — preferred over name search |
 | `get_ingredient(ingredient_id)` | Full ingredient detail (macros per 100 g) |
-| `create_ingredient(name, energy_kcal, protein_g, carbohydrates_g, fat_g, brand?, ...)` | Submit a custom ingredient via wger's Django web form. Requires `WGER_USERNAME` + `WGER_PASSWORD` (see below). Enters as 'pending' until a wger admin accepts |
 
-> wger's REST `/ingredient/` is **read-only** by design (community-maintained DB). `create_ingredient` works around this by driving the `/<lang>/nutrition/ingredient/add/` Django form with session-cookie auth, so it needs separate username/password credentials. The submission enters as pending and isn't immediately searchable — a wger admin must accept it (instant on self-hosted, can take days on wger.de).
+> wger's REST `/ingredient/` is **read-only** by design (community-maintained DB), so there is no `create_ingredient` tool. Submitting custom ingredients previously drove wger's Django web form with username/password; that path was dropped with the move to multi-user SSO auth.
 
 ### Nutrition plans, meals, recipes, diary
 
@@ -193,32 +166,36 @@ Tools are grouped by domain. Each lives in its own module under [`src/wger_mcp/t
 
 | Tool | Description |
 |------|-------------|
-| `lookup_food_by_barcode(barcode)` | Resolve an EAN/UPC/GTIN on Open Food Facts. Returns Polish name + ingredients (when present), macros per 100 g, and a `wger_ingredient_payload` ready to pass straight to `create_ingredient`. Salt→sodium conversion applied automatically |
+| `lookup_food_by_barcode(barcode)` | Resolve an EAN/UPC/GTIN on Open Food Facts. Returns Polish name + ingredients (when present), macros per 100 g, and a normalised `wger_ingredient_payload` (informational). Salt→sodium conversion applied automatically |
 | `lookup_foods_by_barcodes(barcodes[])` | Batch variant — concurrent fetches (capped at 4 in flight) with one-shot retry on 429. Returns map keyed by barcode |
 
-> Use these before `create_ingredient` when you have a barcode — far more accurate than wger name search. Coverage is good for branded packaged goods (Wedel, Milka, Mutti, Prince Polo, Skyr…) and thin for supermarket private-labels (Biedronka, Lidl Pilos). For items missing on OFF, the response includes a `suggestion` URL to add them — the maintainer-recommended path, and additions flow back into wger via the next ingredient-sync.
+> Use these when you have a barcode — far more accurate than wger name search. Coverage is good for branded packaged goods (Wedel, Milka, Mutti, Prince Polo, Skyr…) and thin for supermarket private-labels (Biedronka, Lidl Pilos). For items missing on OFF, the response includes a `suggestion` URL to add them — additions flow back into wger via the next ingredient-sync.
 
 ## Configuring a client
 
-### Claude Desktop / Code (Streamable HTTP), `api_key`
+### Interactive (MCP-native OAuth)
+
+Point the client at the Streamable HTTP URL. On first use it fetches
+`/.well-known/oauth-protected-resource`, runs the OAuth flow against the IdP,
+and attaches the resulting Bearer token automatically.
 
 ```json
 {
   "mcpServers": {
     "wger": {
       "type": "streamable-http",
-      "url": "https://wger-mcp.example.com/mcp",
-      "headers": {
-        "X-API-Key": "<your-key>"
-      }
+      "url": "https://wger-mcp.example.com/mcp"
     }
   }
 }
 ```
 
-### Claude Desktop / Code, `jwt`
+### Scripts / headless (manual Bearer)
 
-Obtain a token from your IdP (device code, password, refresh, …) and pass it as `Authorization: Bearer <token>`. See `scripts/get_token.py` for a Keycloak device-flow example.
+Obtain an OIDC token out-of-band and pass it as `Authorization: Bearer <token>`.
+See `scripts/get_token.py` for a device-flow example. The token's
+audience must be acceptable to the server (`MCP_OIDC_AUDIENCE`); the server then
+exchanges it for a wger credential.
 
 ## Deployment
 
@@ -238,15 +215,15 @@ so that streamable-HTTP/SSE responses aren't buffered.
 
 ```bash
 uv sync --dev
-uv run pytest        # 28 tests covering all 3 auth strategies + wger client
+uv run pytest        # OIDC inbound auth, token exchange, wger client
 uv run ruff check
 ```
 
 ### Source layout
 
-- [`src/wger_mcp/server.py`](src/wger_mcp/server.py) — Starlette + FastMCP wiring, lifespan, healthcheck, auth middleware (~90 LOC).
-- [`src/wger_mcp/wger_client.py`](src/wger_mcp/wger_client.py) — async httpx wrapper. `paginate()` uses `count` + `next` URL to fan out remaining pages concurrently (page- or offset-style), with serial fallback for unknown formats.
-- [`src/wger_mcp/auth/`](src/wger_mcp/auth/) — pluggable inbound auth strategies.
+- [`src/wger_mcp/server.py`](src/wger_mcp/server.py) — Starlette + FastMCP wiring, lifespan, healthcheck, OAuth metadata, auth middleware.
+- [`src/wger_mcp/wger_client.py`](src/wger_mcp/wger_client.py) — async httpx wrapper. Resolves the per-request wger credential from the token provider. `paginate()` uses `count` + `next` URL to fan out remaining pages concurrently (page- or offset-style), with serial fallback for unknown formats.
+- [`src/wger_mcp/auth/`](src/wger_mcp/auth/) — inbound OIDC validation (`oidc.py`, discovery in `oidc_discovery.py`), token exchange + outbound credential provider (`exchange.py`), per-request identity (`identity.py`), OAuth metadata (`oauth.py`).
 - [`src/wger_mcp/tools/`](src/wger_mcp/tools/) — one module per domain. Each exposes `register(mcp, client)`; [`tools/__init__.py`](src/wger_mcp/tools/__init__.py) registers them all.
 
 ### Performance notes

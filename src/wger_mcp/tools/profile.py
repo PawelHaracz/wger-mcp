@@ -13,7 +13,7 @@ from .common import err
 def register(mcp: FastMCP, client: WgerClient) -> None:
     @mcp.tool()
     async def whoami() -> dict[str, Any]:
-        """Return the wger user profile bound to the configured API token."""
+        """Return the wger user profile of the authenticated caller."""
         try:
             return await client.get("userprofile/")
         except WgerError as exc:

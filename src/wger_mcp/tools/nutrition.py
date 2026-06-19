@@ -10,7 +10,6 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from ..wger_client import WgerClient, WgerError
-from ..wger_session import WgerSession, WgerSessionError
 from .common import bad_request, err
 
 _INGREDIENT_CONCURRENCY = 8
@@ -28,7 +27,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def get_nutrition_plan(plan_id: int) -> dict[str, Any]:
+    async def get_nutrition_plan(plan_id: str) -> dict[str, Any]:
         """Fetch one nutrition plan with meals and items."""
         try:
             return await client.get(f"nutritionplan/{plan_id}/")
@@ -64,7 +63,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_nutrition_plan(
-        plan_id: int,
+        plan_id: str,
         description: Annotated[str | None, Field(max_length=255)] = None,
         only_logging: bool | None = None,
         goal_energy: Annotated[float | None, Field(ge=0, le=20000)] = None,
@@ -94,7 +93,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_nutrition_plan(plan_id: int) -> dict[str, Any]:
+    async def delete_nutrition_plan(plan_id: str) -> dict[str, Any]:
         """Delete a nutrition plan (cascades to its meals and diary entries)."""
         try:
             await client.delete(f"nutritionplan/{plan_id}/")
@@ -104,7 +103,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def create_meal(
-        plan_id: int,
+        plan_id: str,
         name: Annotated[str, Field(min_length=1, max_length=255)],
         order: Annotated[int, Field(ge=1, le=100)] = 1,
         time: str | None = None,
@@ -130,7 +129,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def create_recipe(
-        plan_id: int,
+        plan_id: str,
         name: Annotated[str, Field(min_length=1, max_length=255)],
         order: Annotated[int, Field(ge=1, le=100)] = 1,
     ) -> dict[str, Any]:
@@ -145,7 +144,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def get_recipe(recipe_id: int) -> dict[str, Any]:
+    async def get_recipe(recipe_id: str) -> dict[str, Any]:
         """Fetch a recipe (Meal) with its items. recipe_id = meal id."""
         try:
             return await client.get(f"meal/{recipe_id}/")
@@ -154,11 +153,11 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def add_ingredient_to_recipe(
-        recipe_id: int,
-        ingredient_id: int,
+        recipe_id: str,
+        ingredient_id: str,
         amount_g: Annotated[float, Field(gt=0, le=10000)],
         order: Annotated[int, Field(ge=1, le=200)] = 1,
-        weight_unit_id: int | None = None,
+        weight_unit_id: str | None = None,
     ) -> dict[str, Any]:
         """Add an ingredient to a recipe (POST /mealitem/). amount_g is in
         grams unless weight_unit_id is supplied (custom unit)."""
@@ -175,108 +174,16 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         except WgerError as exc:
             return err(exc)
 
-    # wger's /api/v2/ingredient/ endpoint is read-only (ReadOnlyModelViewSet).
-    # Custom ingredients can only be submitted via the Django web form at
-    # /<lang>/nutrition/ingredient/add/, which needs session-cookie auth (not
-    # a DRF token). create_ingredient below uses WgerSession (configured via
-    # WGER_USERNAME / WGER_PASSWORD) to drive that form. Submissions enter as
-    # 'pending' and need wger admin acceptance before becoming searchable.
-
-    @mcp.tool()
-    async def create_ingredient(
-        name: Annotated[str, Field(min_length=1, max_length=200)],
-        energy_kcal: Annotated[float, Field(ge=0, le=2000)],
-        protein_g: Annotated[float, Field(ge=0, le=200)],
-        carbohydrates_g: Annotated[float, Field(ge=0, le=200)],
-        fat_g: Annotated[float, Field(ge=0, le=200)],
-        brand: Annotated[str, Field(max_length=200)] = "",
-        carbohydrates_sugar_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        fat_saturated_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        fiber_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        sodium_g: Annotated[float | None, Field(ge=0, le=200)] = None,
-        is_vegan: bool = False,
-        is_vegetarian: bool = False,
-        license_id: int = 2,
-        license_author: str = "",
-    ) -> dict[str, Any]:
-        """Submit a custom ingredient via wger's Django web form.
-
-        Background: wger's REST /ingredient/ endpoint is read-only by design
-        (ReadOnlyModelViewSet — confirmed at source level). Custom additions
-        are submitted through the web UI's /<lang>/nutrition/ingredient/add/
-        form, which uses session-cookie auth. This tool drives that form on
-        your behalf — requires WGER_USERNAME / WGER_PASSWORD in env.
-
-        Macros are per 100 g. license_id is the wger License PK (default 2 =
-        ODBL on wger.de; check /api/v2/license/ for your instance).
-        license_author defaults to your username if blank.
-
-        Caveat: ingredient submissions enter as 'pending' and are NOT
-        immediately searchable / loggable. A wger admin must accept them.
-        On self-hosted wger you can accept your own. On wger.de this may
-        take days. On success this tool returns the new ingredient id from
-        the redirect, so you can call get_ingredient(id) to check status.
-        """
-        session: WgerSession | None = getattr(client, "session", None)
-        if session is None:
-            return bad_request(
-                "WGER_USERNAME and WGER_PASSWORD are required for create_ingredient "
-                "(wger's REST /ingredient/ is read-only, so we submit via the web "
-                "form). Set both in .env and restart."
-            )
-        # Django form field name is 'fiber' (singular), unlike the API's 'fibres'.
-        form: dict[str, Any] = {
-            "name": name,
-            "brand": brand,
-            "energy": energy_kcal,
-            "protein": protein_g,
-            "carbohydrates": carbohydrates_g,
-            "fat": fat_g,
-            "license": license_id,
-            "license_author": license_author,
-            "is_vegan": "on" if is_vegan else "",
-            "is_vegetarian": "on" if is_vegetarian else "",
-        }
-        if carbohydrates_sugar_g is not None:
-            form["carbohydrates_sugar"] = carbohydrates_sugar_g
-        if fat_saturated_g is not None:
-            form["fat_saturated"] = fat_saturated_g
-        if fiber_g is not None:
-            form["fiber"] = fiber_g
-        if sodium_g is not None:
-            form["sodium"] = sodium_g
-        path = f"/{session.lang}/nutrition/ingredient/add/"
-        try:
-            status, location, body = await session.submit_form(path, form)
-        except WgerSessionError as exc:
-            return {"error": True, "status": exc.status, "detail": exc.detail}
-        if status in (301, 302, 303):
-            new_id = WgerSession.extract_id_from_redirect(location, "ingredient")
-            return {
-                "submitted": True,
-                "id": new_id,
-                "moderation": "pending",
-                "note": (
-                    "Submission accepted by wger. The ingredient enters as "
-                    "pending and is not searchable until a wger admin "
-                    "accepts it. Call get_ingredient(id) to inspect status."
-                ),
-                "redirect": location,
-            }
-        # 200 means the form re-rendered with validation errors. Body is HTML;
-        # we surface a snippet for debugging rather than parsing.
-        snippet = body[:600] if isinstance(body, str) else ""
-        return {
-            "error": True,
-            "status": status,
-            "detail": "form validation failed (wger re-rendered the form)",
-            "html_snippet": snippet,
-        }
+    # Note: wger's REST /ingredient/ endpoint is read-only (ReadOnlyModelViewSet).
+    # Custom-ingredient submission previously went through wger's Django web form
+    # with username/password session auth; that path was removed when the server
+    # moved to the multi-user SSO model (no per-user password). See
+    # docs/adr/0001-multi-user-auth-via-oidc-token-exchange.md.
 
     @mcp.tool()
     async def log_ingredient(
-        plan_id: int,
-        ingredient_id: int,
+        plan_id: str,
+        ingredient_id: str,
         amount_g: Annotated[float, Field(gt=0, le=10000)],
         when: date | None = None,
     ) -> dict[str, Any]:
@@ -295,7 +202,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
     @mcp.tool()
     async def list_log_items(
         when: date | None = None,
-        plan_id: int | None = None,
+        plan_id: str | None = None,
         limit: Annotated[int, Field(ge=1, le=500)] = 200,
     ) -> list[dict[str, Any]]:
         """List nutrition-diary log items. Defaults to today; pass when=None
@@ -313,7 +220,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def delete_log_item(log_item_id: int) -> dict[str, Any]:
+    async def delete_log_item(log_item_id: str) -> dict[str, Any]:
         """Delete a nutrition-diary log item (a logged ingredient entry)."""
         try:
             await client.delete(f"nutritiondiary/{log_item_id}/")
@@ -540,7 +447,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
     @mcp.tool()
     async def nutrition_summary(
         when: date | None = None,
-        plan_id: int | None = None,
+        plan_id: str | None = None,
     ) -> dict[str, Any]:
         """Sum kcal/protein/carbs/fat from diary entries for a date. Per entry,
         fetches the ingredient's macros (per 100 g) and scales by amount_g."""

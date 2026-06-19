@@ -1,12 +1,12 @@
-"""Pluggable auth strategies for incoming MCP requests.
+"""Auth for incoming MCP requests and the outbound wger credential.
 
-The `build_auth_middleware` factory inspects settings and returns the appropriate
-Starlette-style middleware class + kwargs. The middleware always:
+Inbound (``MCP_AUTH``):
 
-- bypasses ``/health`` and other no-auth paths
-- on success, stores identity in ``scope['state']['mcp_user']`` (str | None) and
-  ``scope['state']['mcp_auth']`` (str, the strategy name)
-- on failure, returns ``401`` with ``WWW-Authenticate``
+- ``oidc`` — validate an SSO (OIDC) token; carry it for token-exchange.
+- ``none`` — local-dev only; no inbound auth, static dev token outbound.
+
+Outbound is always a per-request wger credential supplied by a
+:class:`WgerTokenProvider` (see ``exchange.py`` and ``docs/adr/0001``).
 """
 
 from __future__ import annotations
@@ -14,57 +14,70 @@ from __future__ import annotations
 from typing import Any
 
 from ..config import AuthStrategy, Settings
-from .api_key import ApiKeyAuthMiddleware
 from .base import NoAuthMiddleware
-from .jwt import JwtAuthMiddleware
-from .proxy_header import ProxyHeaderAuthMiddleware
+from .exchange import TokenExchanger, WgerTokenProvider
+from .oauth import (
+    WELL_KNOWN_PATH,
+    protected_resource_metadata,
+    resource_metadata_url,
+)
+from .oidc import OidcAuthMiddleware
+from .oidc_discovery import discover_endpoints
 
 __all__ = [
-    "ApiKeyAuthMiddleware",
-    "JwtAuthMiddleware",
+    "WELL_KNOWN_PATH",
     "NoAuthMiddleware",
-    "ProxyHeaderAuthMiddleware",
+    "OidcAuthMiddleware",
+    "TokenExchanger",
+    "WgerTokenProvider",
     "build_auth_middleware",
+    "build_token_provider",
+    "protected_resource_metadata",
+    "resource_metadata_url",
 ]
 
 
+def _resolve_endpoints(s: Settings) -> tuple[str, str]:
+    return discover_endpoints(
+        str(s.oidc_issuer),
+        jwks_uri=str(s.oidc_jwks_uri) if s.oidc_jwks_uri else None,
+        token_endpoint=str(s.oidc_token_endpoint) if s.oidc_token_endpoint else None,
+    )
+
+
 def build_auth_middleware(settings: Settings) -> tuple[type, dict[str, Any]]:
-    """Pick an auth middleware class + kwargs based on settings."""
+    """Pick an inbound auth middleware class + kwargs based on settings."""
     s = settings
     match s.mcp_auth:
         case AuthStrategy.none:
             return NoAuthMiddleware, {}
-        case AuthStrategy.api_key:
-            if not s.mcp_api_keys:
-                raise RuntimeError(
-                    "MCP_AUTH=api_key requires at least one key in MCP_API_KEYS"
-                )
-            return ApiKeyAuthMiddleware, {
-                "keys": set(s.mcp_api_keys),
-                "header_name": s.mcp_api_key_header,
+        case AuthStrategy.oidc:
+            jwks_uri, _ = _resolve_endpoints(s)
+            return OidcAuthMiddleware, {
+                "jwks_uri": jwks_uri,
+                "issuer": str(s.oidc_issuer),
+                "audience": s.mcp_oidc_audience,
+                "algorithms": s.mcp_oidc_algorithms,
+                "username_claim": s.mcp_oidc_username_claim,
+                "allowed_users": set(s.mcp_oidc_allowed_users),
+                "jwks_ttl_seconds": s.mcp_jwks_ttl_seconds,
+                "resource_metadata_url": resource_metadata_url(s),
             }
-        case AuthStrategy.jwt:
-            if not s.mcp_jwt_jwks_uri or not s.mcp_jwt_issuer:
-                raise RuntimeError(
-                    "MCP_AUTH=jwt requires MCP_JWT_JWKS_URI and MCP_JWT_ISSUER"
-                )
-            return JwtAuthMiddleware, {
-                "jwks_uri": str(s.mcp_jwt_jwks_uri),
-                "issuer": s.mcp_jwt_issuer,
-                "audience": s.mcp_jwt_audience,
-                "algorithms": s.mcp_jwt_algorithms,
-                "username_claim": s.mcp_jwt_username_claim,
-                "allowed_users": set(s.mcp_jwt_allowed_users),
-                "jwks_ttl_seconds": s.mcp_jwt_jwks_ttl_seconds,
-            }
-        case AuthStrategy.proxy_header:
-            if not s.mcp_proxy_trusted_ips:
-                raise RuntimeError(
-                    "MCP_AUTH=proxy_header requires MCP_PROXY_TRUSTED_IPS for safety"
-                )
-            return ProxyHeaderAuthMiddleware, {
-                "user_header": s.mcp_proxy_user_header,
-                "email_header": s.mcp_proxy_email_header,
-                "trusted_ips": set(s.mcp_proxy_trusted_ips),
-                "allowed_users": set(s.mcp_proxy_allowed_users),
-            }
+    raise RuntimeError(f"unsupported MCP_AUTH: {s.mcp_auth}")  # pragma: no cover
+
+
+def build_token_provider(settings: Settings) -> WgerTokenProvider:
+    """Build the outbound wger credential provider for the chosen strategy."""
+    s = settings
+    if s.mcp_auth is AuthStrategy.none:
+        return WgerTokenProvider(dev_token=s.wger_dev_token)
+    _, token_endpoint = _resolve_endpoints(s)
+    exchanger = TokenExchanger(
+        token_endpoint=token_endpoint,
+        client_id=str(s.oidc_client_id),
+        client_secret=str(s.oidc_client_secret),
+        wger_audience=str(s.wger_oidc_audience),
+        provider_token_url=s.provider_token_url,
+        provider=s.wger_allauth_provider,
+    )
+    return WgerTokenProvider(exchanger=exchanger)

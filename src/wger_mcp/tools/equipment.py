@@ -23,7 +23,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def get_gym_equipment(equipment_id: int) -> dict[str, Any]:
+    async def get_gym_equipment(equipment_id: str) -> dict[str, Any]:
         """Fetch a single equipment entry by ID."""
         try:
             return await client.get(f"equipment/{equipment_id}/")
@@ -42,7 +42,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_gym_equipment(
-        equipment_id: int,
+        equipment_id: str,
         name: Annotated[str, Field(min_length=1, max_length=100)],
     ) -> dict[str, Any]:
         """Rename an equipment entry."""
@@ -52,7 +52,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_gym_equipment(equipment_id: int) -> dict[str, Any]:
+    async def delete_gym_equipment(equipment_id: str) -> dict[str, Any]:
         """Delete an equipment entry."""
         try:
             await client.delete(f"equipment/{equipment_id}/")

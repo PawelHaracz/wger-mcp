@@ -8,7 +8,23 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from ..wger_client import WgerClient, WgerError
-from .common import err
+from .common import bad_request, err
+
+_NUTRISCORE = r"^[A-Ea-e]$"
+
+
+def _shape_images(images: Any) -> list[dict[str, Any]]:
+    """Flatten an exercise's images, surfacing the 2.6 small/medium thumbnails."""
+    out: list[dict[str, Any]] = []
+    for img in images or []:
+        if not isinstance(img, dict):
+            continue
+        out.append({
+            "image": img.get("image"),
+            "is_main": img.get("is_main"),
+            "thumbnails": img.get("thumbnails"),
+        })
+    return out
 
 
 def register(mcp: FastMCP, client: WgerClient) -> None:
@@ -45,6 +61,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
                 "name": (match or {}).get("name"),
                 "category": (ex.get("category") or {}).get("name"),
                 "equipment": [e.get("name") for e in (ex.get("equipment") or [])],
+                "images": _shape_images(ex.get("images")),
                 "translations": [
                     {"language": t.get("language"), "name": t.get("name")} for t in translations
                 ],
@@ -52,8 +69,11 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         return shaped
 
     @mcp.tool()
-    async def get_exercise(exercise_id: int) -> dict[str, Any]:
-        """Fetch full exercise detail (instructions, muscles, equipment)."""
+    async def get_exercise(exercise_id: str) -> dict[str, Any]:
+        """Fetch full exercise detail (instructions, muscles, equipment, images).
+
+        Since wger 2.6 each image also carries ``thumbnails`` with ``small`` and
+        ``medium`` URLs (returned verbatim in the raw detail)."""
         try:
             return await client.get(f"exerciseinfo/{exercise_id}/")
         except WgerError as exc:
@@ -64,14 +84,29 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         query: Annotated[str, Field(min_length=2)],
         language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] = "en",
         limit: Annotated[int, Field(ge=1, le=50)] = 10,
+        nutriscore: Annotated[str | None, Field(pattern=_NUTRISCORE)] = None,
+        nutriscore_better_than: Annotated[str | None, Field(pattern=_NUTRISCORE)] = None,
+        nutriscore_at_worst: Annotated[str | None, Field(pattern=_NUTRISCORE)] = None,
     ) -> list[dict[str, Any]]:
-        """Search wger's ingredient database (foods with macros)."""
+        """Search wger's ingredient database (foods with macros).
+
+        Nutri-Score grades run A (best) → E (worst). Optional filters (wger 2.6):
+        ``nutriscore`` exact grade; ``nutriscore_better_than='C'`` returns A/B
+        only (strictly better); ``nutriscore_at_worst='C'`` returns A/B/C
+        (C or better). Pass at most one of the three.
+        """
+        chosen = [v for v in (nutriscore, nutriscore_better_than, nutriscore_at_worst) if v]
+        if len(chosen) > 1:
+            return [bad_request("pass at most one nutriscore filter")]
+        params: dict[str, Any] = {"name__search": query, "language__code": language}
+        if nutriscore:
+            params["nutriscore"] = nutriscore.upper()
+        elif nutriscore_better_than:
+            params["nutriscore__lt"] = nutriscore_better_than.upper()
+        elif nutriscore_at_worst:
+            params["nutriscore__lte"] = nutriscore_at_worst.upper()
         try:
-            results = await client.paginate(
-                "ingredientinfo/",
-                params={"name__search": query, "language__code": language},
-                limit=limit,
-            )
+            results = await client.paginate("ingredientinfo/", params=params, limit=limit)
         except WgerError as exc:
             return [err(exc)]
         shaped: list[dict[str, Any]] = []
@@ -91,7 +126,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         return shaped
 
     @mcp.tool()
-    async def get_ingredient(ingredient_id: int) -> dict[str, Any]:
+    async def get_ingredient(ingredient_id: str) -> dict[str, Any]:
         """Fetch full ingredient detail (macros per 100 g, brand, etc.)."""
         try:
             return await client.get(f"ingredient/{ingredient_id}/")
@@ -151,9 +186,9 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def search_exercises_by_filter(
-        equipment_id: int | None = None,
-        muscle_id: int | None = None,
-        category_id: int | None = None,
+        equipment_id: str | None = None,
+        muscle_id: str | None = None,
+        category_id: str | None = None,
         language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] = "en",
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> list[dict[str, Any]]:

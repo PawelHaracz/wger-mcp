@@ -25,7 +25,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def log_set(
-        exercise_id: int,
+        exercise_id: str,
         reps: Annotated[int, Field(ge=1, le=1000)],
         weight_kg: Annotated[float, Field(ge=0, le=1000)],
         workout_log_date: date | None = None,
@@ -49,7 +49,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
     async def list_workout_logs(
         date_from: date | None = None,
         date_to: date | None = None,
-        exercise_id: int | None = None,
+        exercise_id: str | None = None,
         limit: Annotated[int, Field(ge=1, le=1000)] = 100,
     ) -> list[dict[str, Any]]:
         """List workout log entries (individual sets) with optional date/exercise filters."""
@@ -66,7 +66,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return [err(exc)]
 
     @mcp.tool()
-    async def get_workout_log(log_id: int) -> dict[str, Any]:
+    async def get_workout_log(log_id: str) -> dict[str, Any]:
         """Fetch one workout log entry."""
         try:
             return await client.get(f"workoutlog/{log_id}/")
@@ -75,7 +75,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
 
     @mcp.tool()
     async def update_workout_log(
-        log_id: int,
+        log_id: str,
         reps: Annotated[int | None, Field(ge=1, le=1000)] = None,
         weight_kg: Annotated[float | None, Field(ge=0, le=1000)] = None,
         rir: Annotated[float | None, Field(ge=0, le=10)] = None,
@@ -99,7 +99,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
             return err(exc)
 
     @mcp.tool()
-    async def delete_workout_log(log_id: int) -> dict[str, Any]:
+    async def delete_workout_log(log_id: str) -> dict[str, Any]:
         """Delete a workout log entry."""
         try:
             await client.delete(f"workoutlog/{log_id}/")

@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # Resolved from the discovery document when omitted.
     oidc_jwks_uri: HttpUrl | None = None
     oidc_token_endpoint: HttpUrl | None = None
+    oidc_authorization_endpoint: HttpUrl | None = None
 
     # Inbound-token validation.
     mcp_oidc_audience: str | None = None  # if set, inbound 'aud'/'azp' must contain it

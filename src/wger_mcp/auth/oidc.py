@@ -21,6 +21,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .base import is_bypass_path, reply_unauthorized
 from .identity import Identity, reset_identity, set_identity
+from .oauth import WELL_KNOWN_PATH, forwarded_origin
 
 log = logging.getLogger(__name__)
 
@@ -83,11 +84,14 @@ class OidcAuthMiddleware:
             exp={"essential": True},
         )
 
-    @property
-    def _www_authenticate(self) -> str:
+    def _www_authenticate(self, request: Request) -> str:
         base = 'Bearer realm="wger-mcp"'
-        if self._resource_metadata_url:
-            base += f', resource_metadata="{self._resource_metadata_url}"'
+        url = self._resource_metadata_url
+        if url is None:
+            origin = forwarded_origin(request)
+            url = origin + WELL_KNOWN_PATH if origin else None
+        if url:
+            base += f', resource_metadata="{url}"'
         return base
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -104,7 +108,7 @@ class OidcAuthMiddleware:
             await reply_unauthorized(
                 scope, receive, send,
                 reason="missing bearer token",
-                www_authenticate=self._www_authenticate,
+                www_authenticate=self._www_authenticate(request),
             )
             return
 
@@ -116,7 +120,7 @@ class OidcAuthMiddleware:
             await reply_unauthorized(
                 scope, receive, send,
                 reason=f"invalid token: {exc}",
-                www_authenticate=self._www_authenticate,
+                www_authenticate=self._www_authenticate(request),
             )
             return
 
@@ -124,7 +128,7 @@ class OidcAuthMiddleware:
             await reply_unauthorized(
                 scope, receive, send,
                 reason="audience mismatch",
-                www_authenticate=self._www_authenticate,
+                www_authenticate=self._www_authenticate(request),
             )
             return
 
@@ -134,7 +138,7 @@ class OidcAuthMiddleware:
             await reply_unauthorized(
                 scope, receive, send,
                 reason="user not allowed",
-                www_authenticate=self._www_authenticate,
+                www_authenticate=self._www_authenticate(request),
             )
             return
 

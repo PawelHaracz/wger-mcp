@@ -66,3 +66,12 @@ A wger-issued, RS256, `Authorization: Bearer` token accepted by the wger REST
 API. Two flavours, both Bearer: allauth-headless JWT (from the exchange) and
 SimpleJWT. Access token lives ~5 min; refresh ~120 days and **rotates**
 (single-use, blacklist-after-rotation).
+
+### AS facade
+
+The server presenting **itself** as the OAuth authorization server while
+bridging to the real [[IdP]]. For clients that treat the MCP origin as the AS
+(e.g. claude.ai) and can't reach a private IdP directly: it serves AS metadata,
+`302`s `/oauth/authorize` to the IdP (front-channel), and reverse-proxies
+`/oauth/token` to the IdP (back-channel). The IdP still mints the tokens; the
+facade only relays. See `docs/adr/0003-*.md`.

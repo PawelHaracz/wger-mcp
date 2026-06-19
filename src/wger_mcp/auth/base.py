@@ -15,11 +15,13 @@ _BYPASS_EXACT = {"/health"}
 
 
 def is_bypass_path(path: str) -> bool:
-    """Public paths that skip auth: health checks and OAuth discovery metadata."""
+    """Public paths that skip inbound auth: health, OAuth discovery metadata, and
+    the AS-facade endpoints (which carry their own OAuth client auth)."""
     return (
         path in _BYPASS_EXACT
         or path.startswith("/health/")
         or path.startswith("/.well-known/")
+        or path.startswith("/oauth/")
     )
 
 

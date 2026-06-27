@@ -29,8 +29,11 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 
 log = logging.getLogger(__name__)
 
-AUTHORIZE_PATH = "/oauth/authorize"
-TOKEN_PATH = "/oauth/token"
+# Default facade endpoint paths. Conventional root paths because clients like
+# claude.ai assume them and ignore the authorization_endpoint in the AS metadata.
+# Overridable per-deployment via OAUTH_AUTHORIZE_PATH / OAUTH_TOKEN_PATH (config).
+AUTHORIZE_PATH = "/authorize"
+TOKEN_PATH = "/token"
 AS_METADATA_PATH = "/.well-known/oauth-authorization-server"
 
 
@@ -42,10 +45,14 @@ class AuthorizationServerFacade:
         *,
         idp_authorization_endpoint: str,
         idp_token_endpoint: str,
+        authorize_path: str = AUTHORIZE_PATH,
+        token_path: str = TOKEN_PATH,
         timeout: float = 15.0,
     ) -> None:
         self._idp_authorize = idp_authorization_endpoint
         self._idp_token = idp_token_endpoint
+        self._authorize_path = authorize_path
+        self._token_path = token_path
         self._client = httpx.AsyncClient(timeout=timeout)
 
     async def aclose(self) -> None:
@@ -56,8 +63,8 @@ class AuthorizationServerFacade:
         base = origin.rstrip("/")
         return {
             "issuer": base,
-            "authorization_endpoint": base + AUTHORIZE_PATH,
-            "token_endpoint": base + TOKEN_PATH,
+            "authorization_endpoint": base + self._authorize_path,
+            "token_endpoint": base + self._token_path,
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],

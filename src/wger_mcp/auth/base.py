@@ -14,14 +14,14 @@ log = logging.getLogger(__name__)
 _BYPASS_EXACT = {"/health"}
 
 
-def is_bypass_path(path: str) -> bool:
+def is_bypass_path(path: str, extra: set[str] | None = None) -> bool:
     """Public paths that skip inbound auth: health, OAuth discovery metadata, and
-    the AS-facade endpoints (which carry their own OAuth client auth)."""
+    the AS-facade endpoints (``extra``; they carry their own OAuth client auth)."""
     return (
         path in _BYPASS_EXACT
+        or (extra is not None and path in extra)
         or path.startswith("/health/")
         or path.startswith("/.well-known/")
-        or path.startswith("/oauth/")
     )
 
 

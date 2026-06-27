@@ -72,6 +72,7 @@ SimpleJWT. Access token lives ~5 min; refresh ~120 days and **rotates**
 The server presenting **itself** as the OAuth authorization server while
 bridging to the real [[IdP]]. For clients that treat the MCP origin as the AS
 (e.g. claude.ai) and can't reach a private IdP directly: it serves AS metadata,
-`302`s `/oauth/authorize` to the IdP (front-channel), and reverse-proxies
-`/oauth/token` to the IdP (back-channel). The IdP still mints the tokens; the
-facade only relays. See `docs/adr/0003-*.md`.
+`302`s `/authorize` to the IdP (front-channel), and reverse-proxies
+`/token` to the IdP (back-channel). Those paths are the defaults clients assume
+(override via `OAUTH_AUTHORIZE_PATH` / `OAUTH_TOKEN_PATH`). The IdP still mints
+the tokens; the facade only relays. See `docs/adr/0003-*.md`.

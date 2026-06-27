@@ -27,12 +27,17 @@ origin as the AS and bridging to the IdP:
 
 - `protected-resource` metadata sets `authorization_servers` to **self**.
 - `/.well-known/oauth-authorization-server` returns RFC 8414 metadata whose
-  `authorization_endpoint` / `token_endpoint` are on this origin
-  (`/oauth/authorize`, `/oauth/token`).
-- `/oauth/authorize` issues a `302` to the IdP's authorization endpoint with the
+  `authorization_endpoint` / `token_endpoint` are on this origin (`/authorize`,
+  `/token` by default — see note below).
+- `/authorize` issues a `302` to the IdP's authorization endpoint with the
   query string intact (front-channel; the user's browser talks to the IdP).
-- `/oauth/token` reverse-proxies the request to the IdP's token endpoint
+- `/token` reverse-proxies the request to the IdP's token endpoint
   (back-channel; only this server talks to the IdP).
+
+The facade paths default to the conventional root `/authorize` and `/token`
+because some clients (claude.ai) ignore the metadata's `authorization_endpoint`
+and assume those defaults relative to the origin. They are configurable via
+`OAUTH_AUTHORIZE_PATH` / `OAUTH_TOKEN_PATH` for clients that expect otherwise.
 
 The IdP's endpoints come from OIDC discovery (overridable via
 `OIDC_AUTHORIZATION_ENDPOINT` / `OIDC_TOKEN_ENDPOINT`). `MCP_PUBLIC_URL` (or the

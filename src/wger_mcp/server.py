@@ -18,10 +18,16 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .auth import (
+    AS_METADATA_PATH,
+    AUTHORIZE_PATH,
+    TOKEN_PATH,
     WELL_KNOWN_PATH,
     build_auth_middleware,
+    build_authorization_server_facade,
     build_token_provider,
+    forwarded_origin,
     protected_resource_metadata,
+    resource_identifier,
 )
 from .config import Settings, load_settings
 from .tools import register_all
@@ -45,6 +51,10 @@ def build_app(settings: Settings) -> Starlette:
     client = WgerClient(settings.wger_api_root, build_token_provider(settings))
     register_all(mcp, client)
 
+    # AS facade: lets a client that treats this origin as the OAuth authorization
+    # server (e.g. claude.ai) reach a private IdP. None when not in OIDC mode.
+    as_facade = build_authorization_server_facade(settings)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
         async with mcp.session_manager.run():
@@ -52,12 +62,19 @@ def build_app(settings: Settings) -> Starlette:
                 yield
             finally:
                 await client.aclose()
+                if as_facade is not None:
+                    await as_facade.aclose()
 
     async def healthcheck(_: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    async def oauth_metadata(_: Request) -> JSONResponse:
-        return JSONResponse(protected_resource_metadata(settings))
+    async def oauth_metadata(request: Request) -> JSONResponse:
+        origin = forwarded_origin(request)
+        return JSONResponse(protected_resource_metadata(settings, origin=origin))
+
+    async def as_metadata(request: Request) -> JSONResponse:
+        origin = resource_identifier(settings, origin=forwarded_origin(request))
+        return JSONResponse(as_facade.metadata(origin))
 
     # streamable_http_app() registers Route(mcp_path, ...) internally.
     # Merging its routes into the top-level Starlette avoids the double-prefix
@@ -91,6 +108,10 @@ def build_app(settings: Settings) -> Starlette:
     # play (the 'none' dev mode has no issuer).
     if settings.oidc_issuer is not None:
         routes.append(Route(WELL_KNOWN_PATH, oauth_metadata))
+        if as_facade is not None:
+            routes.append(Route(AS_METADATA_PATH, as_metadata))
+            routes.append(Route(AUTHORIZE_PATH, as_facade.authorize, methods=["GET"]))
+            routes.append(Route(TOKEN_PATH, as_facade.token, methods=["POST"]))
     app = Starlette(routes=routes, lifespan=lifespan)
     app.router.redirect_slashes = False
     auth_cls, auth_kwargs = build_auth_middleware(settings)

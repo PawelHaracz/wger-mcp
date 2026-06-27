@@ -15,6 +15,8 @@ from starlette.testclient import TestClient
 ISSUER = "https://idp.test/realms/test"
 AUDIENCE = "wger-mcp-test"
 JWKS_URI = f"{ISSUER}/protocol/openid-connect/certs"
+TOKEN_ENDPOINT = f"{ISSUER}/protocol/openid-connect/token"
+AUTHORIZATION_ENDPOINT = f"{ISSUER}/protocol/openid-connect/auth"
 
 # Env that, with MCP_AUTH=oidc, satisfies config validation. Explicit JWKS/token
 # endpoints skip the discovery network call. Tests override via make_client().
@@ -22,7 +24,8 @@ OIDC_ENV = {
     "MCP_AUTH": "oidc",
     "OIDC_ISSUER": ISSUER,
     "OIDC_JWKS_URI": JWKS_URI,
-    "OIDC_TOKEN_ENDPOINT": f"{ISSUER}/protocol/openid-connect/token",
+    "OIDC_TOKEN_ENDPOINT": TOKEN_ENDPOINT,
+    "OIDC_AUTHORIZATION_ENDPOINT": AUTHORIZATION_ENDPOINT,
     "OIDC_CLIENT_ID": "wger-mcp",
     "OIDC_CLIENT_SECRET": "shh",
     "WGER_OIDC_AUDIENCE": "wger",
@@ -36,6 +39,7 @@ _CLEARED_VARS = (
     "OIDC_ISSUER",
     "OIDC_JWKS_URI",
     "OIDC_TOKEN_ENDPOINT",
+    "OIDC_AUTHORIZATION_ENDPOINT",
     "OIDC_CLIENT_ID",
     "OIDC_CLIENT_SECRET",
     "WGER_OIDC_AUDIENCE",

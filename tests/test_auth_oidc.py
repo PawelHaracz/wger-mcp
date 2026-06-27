@@ -45,7 +45,48 @@ def test_oauth_metadata_is_public(mock_jwks: respx.MockRouter) -> None:
         assert r.status_code == 200
         body = r.json()
         assert body["resource"] == "https://mcp.test"
-        assert body["authorization_servers"] == [ISSUER]
+        # We front the IdP as an AS facade, so we advertise *ourselves* as the
+        # authorization server, not the IdP issuer.
+        assert body["authorization_servers"] == ["https://mcp.test"]
+
+
+def test_oauth_metadata_derives_resource_from_forwarded_headers(
+    mock_jwks: respx.MockRouter,
+) -> None:
+    """No MCP_PUBLIC_URL: resource is built from the reverse-proxy headers,
+    not the bound 0.0.0.0:port. Lets a single nginx deploy skip the env var."""
+    with _client() as c:
+        r = c.get(
+            "/.well-known/oauth-protected-resource",
+            headers={
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Host": "wger.private.miedziana.com",
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["resource"] == "https://wger.private.miedziana.com"
+
+
+def test_www_authenticate_derives_metadata_from_forwarded_headers(
+    mock_jwks: respx.MockRouter,
+) -> None:
+    """No MCP_PUBLIC_URL: the 401 resource_metadata URL also follows the proxy
+    headers rather than baking in 0.0.0.0."""
+    with _client() as c:
+        r = c.post(
+            "/mcp/",
+            json=_TOOLS_LIST,
+            headers={
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Host": "wger.private.miedziana.com",
+            },
+        )
+        assert r.status_code == 401
+        www = r.headers["www-authenticate"]
+        assert (
+            'resource_metadata="https://wger.private.miedziana.com'
+            "/.well-known/oauth-protected-resource\"" in www
+        )
 
 
 def test_valid_token_passes(mock_jwks: respx.MockRouter, rsa_key: RSAKey) -> None:

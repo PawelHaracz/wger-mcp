@@ -1,4 +1,4 @@
-"""OIDC discovery: resolve JWKS and token endpoints from any IdP.
+"""OIDC discovery: resolve JWKS, token and authorization endpoints from any IdP.
 
 Reads ``{issuer}/.well-known/openid-configuration`` so the server is not tied
 to a specific provider's URL layout (Keycloak, Authentik, Auth0, Okta, …).
@@ -8,6 +8,8 @@ synchronous call done at startup.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import httpx
 
 
@@ -15,21 +17,28 @@ class OidcDiscoveryError(RuntimeError):
     pass
 
 
+class OidcEndpoints(NamedTuple):
+    jwks_uri: str
+    token_endpoint: str
+    authorization_endpoint: str
+
+
 def discover_endpoints(
     issuer: str,
     *,
     jwks_uri: str | None = None,
     token_endpoint: str | None = None,
+    authorization_endpoint: str | None = None,
     timeout: float = 10.0,
-) -> tuple[str, str]:
-    """Return ``(jwks_uri, token_endpoint)`` for ``issuer``.
+) -> OidcEndpoints:
+    """Return ``(jwks_uri, token_endpoint, authorization_endpoint)`` for ``issuer``.
 
     Uses explicit overrides where given; otherwise fetches the IdP's discovery
-    document. Raises :class:`OidcDiscoveryError` if a needed value can't be
+    document once. Raises :class:`OidcDiscoveryError` if a needed value can't be
     resolved.
     """
-    if jwks_uri and token_endpoint:
-        return jwks_uri, token_endpoint
+    if jwks_uri and token_endpoint and authorization_endpoint:
+        return OidcEndpoints(jwks_uri, token_endpoint, authorization_endpoint)
 
     url = issuer.rstrip("/") + "/.well-known/openid-configuration"
     try:
@@ -41,8 +50,10 @@ def discover_endpoints(
 
     resolved_jwks = jwks_uri or doc.get("jwks_uri")
     resolved_token = token_endpoint or doc.get("token_endpoint")
-    if not resolved_jwks or not resolved_token:
+    resolved_authz = authorization_endpoint or doc.get("authorization_endpoint")
+    if not resolved_jwks or not resolved_token or not resolved_authz:
         raise OidcDiscoveryError(
-            f"discovery document at {url} is missing jwks_uri/token_endpoint"
+            f"discovery document at {url} is missing "
+            "jwks_uri/token_endpoint/authorization_endpoint"
         )
-    return resolved_jwks, resolved_token
+    return OidcEndpoints(resolved_jwks, resolved_token, resolved_authz)

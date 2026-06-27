@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     # protected-resource identifier and in metadata. Falls back to host:port.
     mcp_public_url: HttpUrl | None = None
 
+    # ---- AS-facade endpoint paths ----
+    # This origin acts as the OAuth authorization server for the client. Many
+    # MCP clients (e.g. claude.ai) assume the conventional root paths and ignore
+    # the custom authorization_endpoint advertised in the AS metadata, so default
+    # to /authorize + /token. Override (e.g. /oauth/authorize) if a client wants
+    # a different path — no rebuild needed, just set the env var.
+    oauth_authorize_path: str = "/authorize"
+    oauth_token_path: str = "/token"
+
     # DNS rebinding protection. Empty list disables the check.
     allowed_hosts: list[str] = Field(default_factory=list)
 
@@ -95,6 +104,12 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_algs(cls, v: list[str]) -> list[str]:
         return [a.strip().upper() for a in v if a.strip()]
+
+    @field_validator("oauth_authorize_path", "oauth_token_path", mode="after")
+    @classmethod
+    def _ensure_leading_slash(cls, v: str) -> str:
+        v = v.strip()
+        return v if v.startswith("/") else "/" + v
 
     @model_validator(mode="after")
     def _check_strategy_requirements(self) -> Settings:

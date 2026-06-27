@@ -72,8 +72,10 @@ To support this, the server exposes a thin **AS facade** in `oidc` mode:
 |------|-----------|
 | `/.well-known/oauth-protected-resource` | `authorization_servers` = **this origin** (self) |
 | `/.well-known/oauth-authorization-server` | RFC 8414 metadata; `authorization_endpoint`/`token_endpoint` on **this origin** |
-| `/oauth/authorize` | `302` to the IdP's authorization endpoint (front-channel browser login) |
-| `/oauth/token` | reverse-proxies to the IdP's token endpoint (back-channel) |
+| `/authorize` | `302` to the IdP's authorization endpoint (front-channel browser login) |
+| `/token` | reverse-proxies to the IdP's token endpoint (back-channel) |
+
+The facade paths default to the conventional `/authorize` and `/token` — clients like claude.ai assume those and ignore the `authorization_endpoint` in the AS metadata. Override with `OAUTH_AUTHORIZE_PATH` / `OAUTH_TOKEN_PATH` if a client expects something else (no rebuild needed).
 
 The IdP (e.g. Keycloak) never has to be publicly reachable: the user's browser reaches it for the login redirect, and the back-channel token request is proxied through this server. Tokens are still minted and signed by the IdP, so inbound validation (`iss` = IdP) is unchanged. The IdP's `authorize`/`token` endpoints come from discovery (override with `OIDC_AUTHORIZATION_ENDPOINT` / `OIDC_TOKEN_ENDPOINT`). See [docs/adr/0003-oauth-authorization-server-facade.md](docs/adr/0003-oauth-authorization-server-facade.md).
 

@@ -23,8 +23,8 @@ def test_as_metadata_advertises_facade_endpoints(mock_jwks: respx.MockRouter) ->
         assert r.status_code == 200
         body = r.json()
         assert body["issuer"] == "https://mcp.test"
-        assert body["authorization_endpoint"] == "https://mcp.test/oauth/authorize"
-        assert body["token_endpoint"] == "https://mcp.test/oauth/token"
+        assert body["authorization_endpoint"] == "https://mcp.test/authorize"
+        assert body["token_endpoint"] == "https://mcp.test/token"
         assert body["code_challenge_methods_supported"] == ["S256"]
 
 
@@ -38,7 +38,7 @@ def test_as_metadata_derives_origin_from_forwarded_headers(
             headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "mcp.example.com"},
         )
         assert r.status_code == 200
-        assert r.json()["authorization_endpoint"] == "https://mcp.example.com/oauth/authorize"
+        assert r.json()["authorization_endpoint"] == "https://mcp.example.com/authorize"
 
 
 def test_authorize_redirects_to_idp_preserving_query(mock_jwks: respx.MockRouter) -> None:
@@ -48,7 +48,7 @@ def test_authorize_redirects_to_idp_preserving_query(mock_jwks: respx.MockRouter
             "&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback"
             "&code_challenge=abc123&code_challenge_method=S256&state=xyz"
         )
-        r = c.get(f"/oauth/authorize?{q}", follow_redirects=False)
+        r = c.get(f"/authorize?{q}", follow_redirects=False)
         assert r.status_code == 302
         loc = r.headers["location"]
         assert loc.startswith(AUTHORIZATION_ENDPOINT + "?")
@@ -63,7 +63,7 @@ def test_authorize_is_public(mock_jwks: respx.MockRouter) -> None:
     """No bearer token needed to start the flow (302, not 401)."""
     with _client() as c:
         r = c.get(
-            "/oauth/authorize?response_type=code&client_id=wger-mcp",
+            "/authorize?response_type=code&client_id=wger-mcp",
             follow_redirects=False,
         )
         assert r.status_code == 302
@@ -75,7 +75,7 @@ def test_token_reverse_proxies_to_idp(mock_jwks: respx.MockRouter) -> None:
     )
     with _client() as c:
         r = c.post(
-            "/oauth/token",
+            "/token",
             data={
                 "grant_type": "authorization_code",
                 "code": "the-code",
@@ -89,3 +89,24 @@ def test_token_reverse_proxies_to_idp(mock_jwks: respx.MockRouter) -> None:
         sent = route.calls.last.request.content.decode()
         assert "grant_type=authorization_code" in sent
         assert "code_verifier=the-verifier" in sent
+
+
+def test_facade_paths_are_overridable(mock_jwks: respx.MockRouter) -> None:
+    """OAUTH_AUTHORIZE_PATH / OAUTH_TOKEN_PATH override the default root paths,
+    in both the AS metadata and the live (auth-bypassed) routes."""
+    with _client(
+        MCP_PUBLIC_URL="https://mcp.test",
+        OAUTH_AUTHORIZE_PATH="/oauth/authorize",
+        OAUTH_TOKEN_PATH="/oauth/token",
+    ) as c:
+        meta = c.get("/.well-known/oauth-authorization-server").json()
+        assert meta["authorization_endpoint"] == "https://mcp.test/oauth/authorize"
+        assert meta["token_endpoint"] == "https://mcp.test/oauth/token"
+        # the overridden authorize path is served and public (302, not 401)
+        r = c.get(
+            "/oauth/authorize?response_type=code&client_id=wger-mcp",
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        # and the default root path is no longer wired → 401 (auth challenge)
+        assert c.get("/authorize", follow_redirects=False).status_code == 401

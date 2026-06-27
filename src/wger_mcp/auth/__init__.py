@@ -85,6 +85,9 @@ def build_auth_middleware(settings: Settings) -> tuple[type, dict[str, Any]]:
                 "resource_metadata_url": (
                     resource_metadata_url(s) if s.mcp_public_url else None
                 ),
+                # Facade endpoints are public (they carry their own OAuth client
+                # auth); bypass inbound-token validation for the configured paths.
+                "public_paths": {s.oauth_authorize_path, s.oauth_token_path},
             }
     raise RuntimeError(f"unsupported MCP_AUTH: {s.mcp_auth}")  # pragma: no cover
 
@@ -104,6 +107,8 @@ def build_authorization_server_facade(
     return AuthorizationServerFacade(
         idp_authorization_endpoint=eps.authorization_endpoint,
         idp_token_endpoint=eps.token_endpoint,
+        authorize_path=settings.oauth_authorize_path,
+        token_path=settings.oauth_token_path,
     )
 
 

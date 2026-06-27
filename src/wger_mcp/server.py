@@ -19,8 +19,6 @@ from starlette.routing import Route
 
 from .auth import (
     AS_METADATA_PATH,
-    AUTHORIZE_PATH,
-    TOKEN_PATH,
     WELL_KNOWN_PATH,
     build_auth_middleware,
     build_authorization_server_facade,
@@ -110,8 +108,12 @@ def build_app(settings: Settings) -> Starlette:
         routes.append(Route(WELL_KNOWN_PATH, oauth_metadata))
         if as_facade is not None:
             routes.append(Route(AS_METADATA_PATH, as_metadata))
-            routes.append(Route(AUTHORIZE_PATH, as_facade.authorize, methods=["GET"]))
-            routes.append(Route(TOKEN_PATH, as_facade.token, methods=["POST"]))
+            routes.append(
+                Route(settings.oauth_authorize_path, as_facade.authorize, methods=["GET"])
+            )
+            routes.append(
+                Route(settings.oauth_token_path, as_facade.token, methods=["POST"])
+            )
     app = Starlette(routes=routes, lifespan=lifespan)
     app.router.redirect_slashes = False
     auth_cls, auth_kwargs = build_auth_middleware(settings)

@@ -69,6 +69,7 @@ class OidcAuthMiddleware:
         allowed_users: set[str],
         jwks_ttl_seconds: int = 3600,
         resource_metadata_url: str | None = None,
+        public_paths: set[str] | None = None,
     ) -> None:
         self.app = app
         self._jwks = JwksCache(jwks_uri, jwks_ttl_seconds)
@@ -78,6 +79,7 @@ class OidcAuthMiddleware:
         self._username_claim = username_claim
         self._allowed = allowed_users
         self._resource_metadata_url = resource_metadata_url
+        self._public_paths = public_paths or set()
 
         self._claims_registry = jwt.JWTClaimsRegistry(
             iss={"essential": True, "value": self._issuer},
@@ -98,7 +100,7 @@ class OidcAuthMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        if is_bypass_path(scope.get("path", "")):
+        if is_bypass_path(scope.get("path", ""), self._public_paths):
             await self.app(scope, receive, send)
             return
 

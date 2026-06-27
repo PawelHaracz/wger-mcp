@@ -38,7 +38,7 @@ Server listens on `http://0.0.0.0:8765`, MCP endpoint at `/mcp`.
 
 ## Inbound auth strategies
 
-Pick one with `MCP_AUTH=`. The server gates **every** request to `/mcp/*`. `/health`, `/.well-known/*` and the AS-facade endpoints (`/oauth/*`) are always public.
+Pick one with `MCP_AUTH=`. The server gates **every** request to `/mcp/*`. `/health`, `/.well-known/*` and the AS-facade endpoints (`/authorize`, `/token` by default) are always public.
 
 ### `oidc` (default)
 

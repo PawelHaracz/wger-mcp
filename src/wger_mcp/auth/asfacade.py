@@ -10,9 +10,12 @@ typically because the MCP server is exposed via a tunnel but the IdP stays on a
 private network — we expose a thin facade:
 
 - advertise *this* origin as the authorization server,
-- ``/oauth/authorize`` → 302 the browser to the IdP's authorization endpoint
+- ``/authorize`` → 302 the browser to the IdP's authorization endpoint
   (the user's browser reaches the IdP directly; cookies/login stay on the IdP),
-- ``/oauth/token`` → reverse-proxy the back-channel token request to the IdP.
+- ``/token`` → reverse-proxy the back-channel token request to the IdP.
+
+(Paths default to the conventional ``/authorize`` / ``/token``; override with
+``OAUTH_AUTHORIZE_PATH`` / ``OAUTH_TOKEN_PATH``.)
 
 The IdP never has to be publicly reachable; the client only ever talks to this
 origin. Tokens are still minted and signed by the IdP, so the inbound validation

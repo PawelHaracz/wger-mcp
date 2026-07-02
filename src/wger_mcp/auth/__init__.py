@@ -98,8 +98,8 @@ def build_authorization_server_facade(
     """Build the AS facade for OIDC mode (None otherwise).
 
     Lets claude.ai-style clients, which treat this origin as the authorization
-    server, reach a private IdP: ``/oauth/authorize`` 302s to the IdP and
-    ``/oauth/token`` reverse-proxies to it.
+    server, reach a private IdP: ``/authorize`` 302s to the IdP and
+    ``/token`` reverse-proxies to it (paths configurable, see ``config``).
     """
     if settings.mcp_auth is not AuthStrategy.oidc:
         return None

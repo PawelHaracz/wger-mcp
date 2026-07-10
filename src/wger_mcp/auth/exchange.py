@@ -204,6 +204,9 @@ class WgerTokenProvider:
     - ``oidc`` mode: per-request, exchange the caller's SSO token for a
       wger JWT → ``Bearer <jwt>``.
     - ``dev`` mode (``MCP_AUTH=none``): a static personal DRF key → ``Token <key>``.
+    - ``apikey`` mode (``MCP_AUTH=apikey``): per-request DRF key taken from the
+      caller's :class:`Identity` (set by :class:`~wger_mcp.auth.base.ApiKeyAuthMiddleware`)
+      → ``Token <key>``.
     """
 
     def __init__(
@@ -211,13 +214,20 @@ class WgerTokenProvider:
         *,
         exchanger: TokenExchanger | None = None,
         dev_token: str | None = None,
+        passthrough_apikey: bool = False,
     ) -> None:
-        if exchanger is None and not dev_token:
-            raise ValueError("WgerTokenProvider needs either an exchanger or a dev_token")
+        if not passthrough_apikey and exchanger is None and not dev_token:
+            raise ValueError("WgerTokenProvider needs either an exchanger, a dev_token, or passthrough_apikey=True")
         self._exchanger = exchanger
         self._dev_token = dev_token
+        self._passthrough_apikey = passthrough_apikey
 
     async def authorization_header(self) -> str:
+        if self._passthrough_apikey:
+            identity = current_identity()
+            if identity is None or not identity.inbound_token:
+                raise WgerTokenError("no API key bound to this request")
+            return f"Token {identity.inbound_token}"
         if self._exchanger is None:
             return f"Token {self._dev_token}"
         identity = current_identity()

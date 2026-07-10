@@ -30,6 +30,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AuthStrategy(StrEnum):
     oidc = "oidc"
     none = "none"
+    apikey = "apikey"
 
 
 class Settings(BaseSettings):
@@ -128,6 +129,7 @@ class Settings(BaseSettings):
                 raise ValueError("MCP_AUTH=oidc requires: " + ", ".join(missing))
         elif self.mcp_auth is AuthStrategy.none and not self.wger_dev_token:
             raise ValueError("MCP_AUTH=none requires WGER_DEV_TOKEN (a wger DRF API key)")
+        # apikey mode needs no extra server-side config: each client supplies their own key
         return self
 
     # ---------- derived ----------

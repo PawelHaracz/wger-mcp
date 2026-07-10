@@ -20,7 +20,7 @@ from .asfacade import (
     TOKEN_PATH,
     AuthorizationServerFacade,
 )
-from .base import NoAuthMiddleware
+from .base import ApiKeyAuthMiddleware, NoAuthMiddleware
 from .exchange import TokenExchanger, WgerTokenProvider
 from .oauth import (
     WELL_KNOWN_PATH,
@@ -37,6 +37,7 @@ __all__ = [
     "AUTHORIZE_PATH",
     "TOKEN_PATH",
     "WELL_KNOWN_PATH",
+    "ApiKeyAuthMiddleware",
     "AuthorizationServerFacade",
     "NoAuthMiddleware",
     "OidcAuthMiddleware",
@@ -69,6 +70,8 @@ def build_auth_middleware(settings: Settings) -> tuple[type, dict[str, Any]]:
     match s.mcp_auth:
         case AuthStrategy.none:
             return NoAuthMiddleware, {}
+        case AuthStrategy.apikey:
+            return ApiKeyAuthMiddleware, {}
         case AuthStrategy.oidc:
             jwks_uri = _resolve_endpoints(s).jwks_uri
             return OidcAuthMiddleware, {
@@ -117,6 +120,8 @@ def build_token_provider(settings: Settings) -> WgerTokenProvider:
     s = settings
     if s.mcp_auth is AuthStrategy.none:
         return WgerTokenProvider(dev_token=s.wger_dev_token)
+    if s.mcp_auth is AuthStrategy.apikey:
+        return WgerTokenProvider(passthrough_apikey=True)
     token_endpoint = _resolve_endpoints(s).token_endpoint
     exchanger = TokenExchanger(
         token_endpoint=token_endpoint,

@@ -36,6 +36,58 @@ async def reply_unauthorized(
     await resp(scope, receive, send)
 
 
+class ApiKeyAuthMiddleware:
+    """Inbound auth for ``MCP_AUTH=apikey``.
+
+    Each MCP client passes its own wger DRF API key as:
+        Authorization: Token <wger-api-key>
+
+    The middleware extracts it, stores it in the per-request :class:`Identity`,
+    and the :class:`~wger_mcp.auth.exchange.WgerTokenProvider` forwards it
+    verbatim to wger (no OIDC involved).
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if is_bypass_path(path):
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers", []))
+        raw_auth = headers.get(b"authorization", b"").decode()
+        if not raw_auth.lower().startswith("token "):
+            await reply_unauthorized(
+                scope,
+                receive,
+                send,
+                reason="missing or invalid Authorization header; expected 'Token <wger-api-key>'",
+                www_authenticate='Token realm="wger-mcp"',
+            )
+            return
+        api_key = raw_auth[6:].strip()
+        if not api_key:
+            await reply_unauthorized(
+                scope,
+                receive,
+                send,
+                reason="empty API key",
+                www_authenticate='Token realm="wger-mcp"',
+            )
+            return
+        token = set_identity(
+            Identity(subject=api_key, username=None, inbound_token=api_key, strategy="apikey")
+        )
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_identity(token)
+
+
 class NoAuthMiddleware:
     """No-op middleware. Use only for local dev (``MCP_AUTH=none``).
 

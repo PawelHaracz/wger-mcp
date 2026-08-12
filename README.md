@@ -3,7 +3,7 @@
 An [MCP](https://modelcontextprotocol.io) server that exposes the [wger](https://wger.de) (>= 2.6) fitness/nutrition REST API as tools (routines, workout logging, exercise & ingredient catalog, nutrition plans + meals + recipes, diary, body-weight tracking, gym equipment, body measurements, volume/PR analytics, daily calorie calculator, …) so that AI assistants can read and write your wger data.
 
 - **Transport:** MCP **Streamable HTTP** (FastMCP).
-- **Auth:** **multi-user via OIDC SSO** — any OIDC IdP (Keycloak, Authentik, Auth0, Okta, …). Every request acts as the calling user's own wger account.
+- **Auth:** **multi-user via OIDC SSO** — any OIDC IdP (Keycloak, Authentik, Auth0, Okta, …). Every request acts as the calling user's own wger account. For single-user self-hosting without an IdP, [`MCP_AUTH=static_token`](#static_token--single-user-no-idp-required) takes a shared secret plus your wger API key instead.
 
 ## How auth works
 
@@ -39,6 +39,12 @@ Server listens on `http://0.0.0.0:8765`, MCP endpoint at `/mcp`.
 ## Inbound auth strategies
 
 Pick one with `MCP_AUTH=`. The server gates **every** request to `/mcp/*`. `/health`, `/.well-known/*` and the AS-facade endpoints (`/authorize`, `/token` by default) are always public.
+
+| Strategy | Users | Needs an IdP? | Safe to expose? |
+|---|---|---|---|
+| [`oidc`](#oidc-default) (default) | multi-user, each acts as themselves | yes | yes |
+| [`static_token`](#static_token--single-user-no-idp-required) | single-user (shared wger account) | no | yes, over TLS |
+| [`none`](#none--no-inbound-authentication) | single-user, unauthenticated | no | **no — localhost only** |
 
 ### `oidc` (default)
 
@@ -93,14 +99,35 @@ The IdP (e.g. Keycloak) never has to be publicly reachable: the user's browser r
 
 > The interactive `/authorize` step `302`s the browser to the IdP, so the **browser** must reach the IdP. With a split-horizon / LAN-only IdP that means running the browser on that network; the back-channel `/token` is always proxied through this server.
 
-### `none` — local dev only
+### `static_token` — single-user, no IdP required
 
-Disables inbound auth and calls wger with a static personal DRF key (Settings → API → "API key"). The server logs a warning at startup. Do not expose to a network.
+For self-hosting where standing up an IdP is overkill. Callers present a shared secret as a bearer token; the server validates it (constant-time) and then calls wger with your personal DRF API key (Settings → API → "API key").
+
+```ini
+MCP_AUTH=static_token
+MCP_STATIC_TOKEN=<openssl rand -hex 32>
+WGER_DEV_TOKEN=<your personal wger API key>
+```
+
+The client sends `Authorization: Bearer <MCP_STATIC_TOKEN>`.
+
+Unlike `none`, inbound requests **are** authenticated, so this is safe to expose over TLS. Caveats:
+
+- **Single-user.** Every authenticated caller acts as the one wger account behind `WGER_DEV_TOKEN`. Use `oidc` if more than one person needs access.
+- **The secret is a password.** It grants full access to that account; rotate it by changing the env var and restarting.
+- **Minimum 32 characters**, enforced at startup — a guessable secret is the entire attack surface.
+- **No MCP-native OAuth.** The OAuth discovery endpoints are deliberately not served under this strategy (a client following them would run a flow whose token this server never accepts), so configure the token out-of-band in your client.
+
+### `none` — no inbound authentication
+
+**Anyone who can reach `/mcp` acts as the account behind `WGER_DEV_TOKEN`** — no credential required. The server logs a warning at startup.
 
 ```ini
 MCP_AUTH=none
 WGER_DEV_TOKEN=<your personal wger API key>
 ```
+
+Safe only when bound to localhost for local development. Never expose it to a network, even behind TLS — use `static_token` instead if you need remote access.
 
 ## Tools
 

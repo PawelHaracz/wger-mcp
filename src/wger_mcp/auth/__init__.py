@@ -3,6 +3,8 @@
 Inbound (``MCP_AUTH``):
 
 - ``oidc`` — validate an SSO (OIDC) token; carry it for token-exchange.
+- ``static_token`` — single-user; validate a shared secret, static dev token
+  outbound. Authenticated, so safe to expose over TLS.
 - ``none`` — local-dev only; no inbound auth, static dev token outbound.
 
 Outbound is always a per-request wger credential supplied by a
@@ -20,7 +22,7 @@ from .asfacade import (
     TOKEN_PATH,
     AuthorizationServerFacade,
 )
-from .base import NoAuthMiddleware
+from .base import NoAuthMiddleware, StaticTokenMiddleware
 from .exchange import TokenExchanger, WgerTokenProvider
 from .oauth import (
     WELL_KNOWN_PATH,
@@ -40,6 +42,7 @@ __all__ = [
     "AuthorizationServerFacade",
     "NoAuthMiddleware",
     "OidcAuthMiddleware",
+    "StaticTokenMiddleware",
     "TokenExchanger",
     "WgerTokenProvider",
     "build_auth_middleware",
@@ -69,6 +72,8 @@ def build_auth_middleware(settings: Settings) -> tuple[type, dict[str, Any]]:
     match s.mcp_auth:
         case AuthStrategy.none:
             return NoAuthMiddleware, {}
+        case AuthStrategy.static_token:
+            return StaticTokenMiddleware, {"token": str(s.mcp_static_token)}
         case AuthStrategy.oidc:
             jwks_uri = _resolve_endpoints(s).jwks_uri
             return OidcAuthMiddleware, {
@@ -115,7 +120,9 @@ def build_authorization_server_facade(
 def build_token_provider(settings: Settings) -> WgerTokenProvider:
     """Build the outbound wger credential provider for the chosen strategy."""
     s = settings
-    if s.mcp_auth is AuthStrategy.none:
+    if s.mcp_auth in (AuthStrategy.none, AuthStrategy.static_token):
+        # Both single-user strategies call wger with the same personal API key;
+        # they differ only in whether inbound requests are authenticated.
         return WgerTokenProvider(dev_token=s.wger_dev_token)
     token_endpoint = _resolve_endpoints(s).token_endpoint
     exchanger = TokenExchanger(

@@ -27,7 +27,7 @@ from .auth import (
     protected_resource_metadata,
     resource_identifier,
 )
-from .config import Settings, load_settings
+from .config import AuthStrategy, Settings, load_settings
 from .tools import register_all
 from .wger_client import WgerClient
 
@@ -102,9 +102,10 @@ def build_app(settings: Settings) -> Starlette:
             seen_paths.add(twin)
     routes = [Route("/health", healthcheck), *mcp_routes]
     # OAuth-protected-resource metadata lets interactive MCP clients discover
-    # the SSO IdP as the authorization server. Only meaningful when OIDC is in
-    # play (the 'none' dev mode has no issuer).
-    if settings.oidc_issuer is not None:
+    # the SSO IdP as the authorization server. Only meaningful when OIDC is the
+    # inbound strategy: advertising it under static_token/none would send
+    # clients through an OAuth flow whose result the server never accepts.
+    if settings.mcp_auth is AuthStrategy.oidc and settings.oidc_issuer is not None:
         routes.append(Route(WELL_KNOWN_PATH, oauth_metadata))
         if as_facade is not None:
             routes.append(Route(AS_METADATA_PATH, as_metadata))

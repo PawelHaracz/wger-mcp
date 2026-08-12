@@ -1,4 +1,4 @@
-# Context — wger-mcp
+# Context — wger MCP server
 
 Glossary of the ubiquitous language for this project. Definitions only — no
 implementation details. See `docs/adr/` for decisions.
@@ -8,30 +8,35 @@ implementation details. See `docs/adr/` for decisions.
 ### Inbound auth
 
 How an MCP *client* (Claude Desktop, a script, …) proves its identity to the
-wger-mcp server. Today selectable via `MCP_AUTH` (api_key | jwt | proxy_header |
-none). Gates every `/mcp/*` request.
+MCP server. Selectable via `MCP_AUTH` (`oidc` | `static_token` | `none`). Gates
+every `/mcp/*` request except the public paths (`/health`, `/.well-known/*`,
+and the [[AS facade]] endpoints).
 
 ### Outbound auth
 
-How the wger-mcp server proves identity to the upstream **wger** REST API.
-Per request, as the specific [[wger identity]] derived from the inbound
-credential, using a [[wger JWT]] obtained by [[Token exchange]]. The legacy
-single static DRF token (and the username/password web-form session) is
-**removed**.
+How the MCP server proves identity to the upstream **wger** REST API. Under
+`oidc` this is per request, as the specific [[wger identity]] derived from the
+inbound credential, using a [[wger JWT]] obtained by [[Token exchange]]. Under
+the single-user strategies it is a static DRF API key (`WGER_DEV_TOKEN`) shared
+by every request. The username/password web-form session is **removed**.
 
 ### wger identity
 
-The wger user account whose data an operation reads or writes. Currently fixed
-(the owner of the outbound token); under the multi-user model it varies
-per request and is derived from the inbound credential.
+The wger user account whose data an operation reads or writes. Under `oidc` it
+varies per request and is derived from the inbound credential; under the
+single-user strategies it is fixed (the owner of `WGER_DEV_TOKEN`).
 
 ### Single-user vs multi-user
 
-- **Single-user:** the whole MCP server acts as one wger account. *(Removed —
-  2026-06-18.)*
 - **Multi-user:** each client maps to its own wger account; the MCP performs
-  every operation as that specific wger identity. *(The only supported model —
-  2026-06-18.)*
+  every operation as that specific wger identity. Requires an [[IdP]].
+  *(`MCP_AUTH=oidc`, the default.)*
+- **Single-user:** the whole MCP server acts as one wger account, via a static
+  API key and no IdP. Two variants differing only in whether inbound requests
+  are authenticated: `static_token` validates a shared secret and is safe to
+  expose over TLS; `none` performs no inbound authentication at all and is
+  localhost-only. *(Re-introduced 2026-08-12 for self-hosting; the earlier
+  removal on 2026-06-18 left no IdP-free option that was safe to expose.)*
 
 ### Pass-through
 
@@ -46,7 +51,7 @@ The external single sign-on authority both wger and the MCP trust — **any OIDC
 provider** (Keycloak, Authentik, Auth0, Okta, …); endpoints are taken from its
 discovery document, so the MCP is not provider-locked. wger must be wired to the
 same IdP as an OIDC social-login provider; the MCP validates the same
-IdP-issued tokens. *(Concretely a self-hosted Keycloak here — 2026-06-18.)*
+IdP-issued tokens. Not required by the single-user strategies.
 
 ### Token exchange
 

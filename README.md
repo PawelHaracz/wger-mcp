@@ -1,9 +1,12 @@
-# wger-mcp
+# wger MCP server
 
 An [MCP](https://modelcontextprotocol.io) server that exposes the [wger](https://wger.de) (>= 2.6) fitness/nutrition REST API as tools (routines, workout logging, exercise & ingredient catalog, nutrition plans + meals + recipes, diary, body-weight tracking, gym equipment, body measurements, volume/PR analytics, daily calorie calculator, …) so that AI assistants can read and write your wger data.
 
+It talks to a wger instance over its public REST API — it is a separate service and requires no changes to wger itself.
+
 - **Transport:** MCP **Streamable HTTP** (FastMCP).
 - **Auth:** **multi-user via OIDC SSO** — any OIDC IdP (Keycloak, Authentik, Auth0, Okta, …). Every request acts as the calling user's own wger account. For single-user self-hosting without an IdP, [`MCP_AUTH=static_token`](#static_token--single-user-no-idp-required) takes a shared secret plus your wger API key instead.
+- **Requires:** wger >= 2.6, Python >= 3.11.
 
 ## How auth works
 
@@ -22,6 +25,8 @@ Provider-agnostic: JWKS/token endpoints come from the IdP's discovery document (
 ## Quick start
 
 ```bash
+git clone https://github.com/wger-project/mcp-server.git
+cd mcp-server
 uv sync
 cp .env.example .env
 # Edit .env: set WGER_BASE_URL, OIDC_ISSUER, OIDC_CLIENT_ID/SECRET, WGER_OIDC_AUDIENCE.
@@ -29,6 +34,15 @@ uv run wger-mcp
 ```
 
 Server listens on `http://0.0.0.0:8765`, MCP endpoint at `/mcp`.
+
+Just trying it against your own account? The [`static_token`](#static_token--single-user-no-idp-required) strategy needs only a wger API key and no IdP:
+
+```bash
+cp .env.example .env
+# In .env: MCP_AUTH=static_token, MCP_STATIC_TOKEN=$(openssl rand -hex 32),
+#          WGER_DEV_TOKEN=<your wger API key>, WGER_BASE_URL=<your wger>
+uv run wger-mcp
+```
 
 ## Prerequisites at the IdP & wger
 
@@ -259,6 +273,12 @@ exchanges it for a wger credential.
 
 ## Deployment
 
+CI publishes a multi-arch image to the GitHub Container Registry on every push to the default branch and on `v*.*.*` tags:
+
+```bash
+docker pull ghcr.io/wger-project/mcp-server:latest
+```
+
 A reference Docker setup ships in `Dockerfile` and `compose.example.yml`. The server is a single ASGI app (`wger_mcp.server:build_app`) and can also be run under any ASGI host (Hypercorn, Granian, gunicorn-uvicorn, …).
 
 If exposed over HTTPS via a reverse proxy, configure the proxy with:
@@ -271,12 +291,24 @@ proxy_read_timeout 3600s;
 
 so that streamable-HTTP/SSE responses aren't buffered.
 
+## Documentation
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — development setup, project layout, how to add a tool or an auth strategy.
+- [docs/api-keys.md](docs/api-keys.md) — which credential goes where, and a `401` troubleshooting table.
+- [CONTEXT.md](CONTEXT.md) — glossary of the terms used across these docs.
+- [docs/HANDOFF.md](docs/HANDOFF.md) — maintainer notes: non-obvious constraints, open items, and known limitations.
+- [docs/adr/](docs/adr/) — architecture decisions and the reasoning behind them:
+  - [0001](docs/adr/0001-multi-user-auth-via-oidc-token-exchange.md) — multi-user access via OIDC token exchange
+  - [0002](docs/adr/0002-opaque-string-resource-ids.md) — opaque string resource ids
+  - [0003](docs/adr/0003-oauth-authorization-server-facade.md) — the OAuth authorization-server facade
+  - [0004](docs/adr/0004-static-token-strategy-for-single-user.md) — the `static_token` strategy
+
 ## Development
 
 ```bash
 uv sync --dev
-uv run pytest        # OIDC inbound auth, token exchange, wger client
-uv run ruff check
+uv run pytest        # inbound auth (OIDC + static token), token exchange, wger client, tools
+uv run ruff check .
 ```
 
 ### Source layout

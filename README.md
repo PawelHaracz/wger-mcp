@@ -219,7 +219,8 @@ Tools are grouped by domain. Each lives in its own module under [`src/wger_mcp/t
 | `update_nutrition_plan(plan_id, ...)` / `delete_nutrition_plan(plan_id)` | Patch / delete a plan (cascade) |
 | `create_meal(plan_id, name, order?, time?)` | Add a meal to a plan |
 | `create_recipe(plan_id, name, order?)` / `get_recipe(recipe_id)` / `add_ingredient_to_recipe(recipe_id, ingredient_id, amount_g, order?, weight_unit_id?)` | Recipes (semantic aliases over `meal/` + `mealitem/` — wger has no separate Recipe entity) |
-| `log_ingredient(plan_id, ingredient_id, amount_g, when?)` | Nutrition diary entry |
+| `log_ingredient(plan_id, ingredient_id, amount_g, when?, meal_id?)` | Nutrition diary entry. `when` takes a full timestamp (`2026-07-21T07:30:00+02:00`, offset preserved) or a bare date (anchored at 12:00); omit it to let wger use the current time |
+| `update_log_item(log_item_id, amount_g?, when?, ingredient_id?, meal_id?)` | Patch a diary entry — the way to correct an entry's time or amount in place |
 | `list_log_items(when?, plan_id?, limit?)` / `delete_log_item(log_item_id)` | List / remove diary entries |
 | `nutrition_summary(when?, plan_id?)` | Daily kcal/protein/carbs/fat from diary entries |
 | `calculate_daily_calories(weight_kg?, height_cm?, age?, sex?, activity_level?, goal?, protein_g_per_kg?, fat_pct_of_kcal?, apply_to_profile?)` | Mifflin-St Jeor TDEE + macro split. All physical inputs auto-fill from `userprofile/` + latest `weightentry/`. `apply_to_profile=True` PATCHes the result into `userprofile.calories` |

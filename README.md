@@ -197,10 +197,12 @@ Tools are grouped by domain. Each lives in its own module under [`src/wger_mcp/t
 
 | Tool | Description |
 |------|-------------|
-| `lookup_food_by_barcode(barcode)` | Resolve an EAN/UPC/GTIN on Open Food Facts. Returns Polish name + ingredients (when present), macros per 100 g, and a normalised `wger_ingredient_payload` (informational). Salt→sodium conversion applied automatically |
-| `lookup_foods_by_barcodes(barcodes[])` | Batch variant — concurrent fetches (capped at 4 in flight) with one-shot retry on 429. Returns map keyed by barcode |
+| `lookup_food_by_barcode(barcode, language?)` | Resolve an EAN/UPC/GTIN on Open Food Facts. Returns the localised name + ingredients (when present), macros per 100 g, and a normalised `wger_ingredient_payload` (informational). Salt→sodium conversion applied automatically |
+| `lookup_foods_by_barcodes(barcodes[], language?)` | Batch variant — concurrent fetches (capped at 4 in flight) with one-shot retry on 429. Returns map keyed by barcode |
 
-> Use these when you have a barcode — far more accurate than wger name search. Coverage is good for branded packaged goods (Wedel, Milka, Mutti, Prince Polo, Skyr…) and thin for supermarket private-labels (Biedronka, Lidl Pilos). For items missing on OFF, the response includes a `suggestion` URL to add them — additions flow back into wger via the next ingredient-sync.
+> Use these when you have a barcode — far more accurate than wger name search. Coverage is good for branded packaged goods and thin for supermarket private-labels, and it varies a lot by country. For items missing on OFF, the response includes a `suggestion` URL to add them — additions flow back into wger via the next ingredient-sync.
+>
+> **Language.** OFF stores per-language fields (`product_name_<lang>`, `ingredients_text_<lang>`). Which one is requested and preferred comes from `DEFAULT_LANGUAGE` (default `en`), and every tool with a `language` argument overrides it per call. The response echoes the resolved `language` and carries both `name_localized` and the language-neutral `name_default`.
 
 ## Configuring a client
 
@@ -255,7 +257,7 @@ uv run ruff check
 - [`src/wger_mcp/server.py`](src/wger_mcp/server.py) — Starlette + FastMCP wiring, lifespan, healthcheck, OAuth metadata, auth middleware.
 - [`src/wger_mcp/wger_client.py`](src/wger_mcp/wger_client.py) — async httpx wrapper. Resolves the per-request wger credential from the token provider. `paginate()` uses `count` + `next` URL to fan out remaining pages concurrently (page- or offset-style), with serial fallback for unknown formats.
 - [`src/wger_mcp/auth/`](src/wger_mcp/auth/) — inbound OIDC validation (`oidc.py`, discovery in `oidc_discovery.py`), token exchange + outbound credential provider (`exchange.py`), per-request identity (`identity.py`), OAuth metadata (`oauth.py`).
-- [`src/wger_mcp/tools/`](src/wger_mcp/tools/) — one module per domain. Each exposes `register(mcp, client)`; [`tools/__init__.py`](src/wger_mcp/tools/__init__.py) registers them all.
+- [`src/wger_mcp/tools/`](src/wger_mcp/tools/) — one module per domain. Each exposes `register(mcp, client, settings)`; [`tools/__init__.py`](src/wger_mcp/tools/__init__.py) registers them all.
 
 ### Performance notes
 
@@ -263,6 +265,23 @@ uv run ruff check
 - Exercise metadata is cached process-wide (`_EX_META_CACHE` in [`tools/analytics.py`](src/wger_mcp/tools/analytics.py)) — analytics tools called repeatedly within one process pay the metadata cost only once.
 - `compare_periods` issues two range queries in parallel and skips fetching the gap window entirely.
 
+## Upgrading
+
+### Language is now configurable (was hard-coded Polish)
+
+The Open Food Facts tools used to always request the Polish fields
+(`product_name_pl`, `ingredients_text_pl`), and the exercise/ingredient search
+tools defaulted to `en`. Both now follow `DEFAULT_LANGUAGE` (default `en`), with
+a per-call `language` argument overriding it.
+
+- **To keep the previous OFF behaviour**, set `DEFAULT_LANGUAGE=pl`. Otherwise
+  barcode lookups return English names where a Polish one used to be preferred.
+- **Response keys changed** on `lookup_food_by_barcode` /
+  `lookup_foods_by_barcodes`: `name_pl` → `name_localized`,
+  `ingredients_text_pl` → `ingredients_text`, plus a new `language` field
+  echoing the resolved code. `name`, `name_default` and the macro fields are
+  unchanged.
+
 ## License
 
-Unspecified for now. Will align with the wger project's license (AGPL-3.0-or-later) before public release.
+AGPL-3.0-or-later, matching the wger project. See [LICENSE](LICENSE).

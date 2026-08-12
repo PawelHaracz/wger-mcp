@@ -7,11 +7,12 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from ..config import Settings
 from ..wger_client import WgerClient, WgerError
 from .common import err
 
 
-def register(mcp: FastMCP, client: WgerClient) -> None:
+def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
     @mcp.tool()
     async def list_gym_equipment(
         limit: Annotated[int, Field(ge=1, le=500)] = 100,

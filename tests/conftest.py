@@ -51,6 +51,7 @@ _CLEARED_VARS = (
     "WGER_DEV_TOKEN",
     "MCP_PUBLIC_URL",
     "ALLOWED_HOSTS",
+    "DEFAULT_LANGUAGE",
 )
 
 

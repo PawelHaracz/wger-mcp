@@ -1,12 +1,17 @@
 """Open Food Facts lookup tools.
 
-OFF is a free, community-maintained food database (~3.6 M products) with rich
-Polish coverage. Use these tools when you have an EAN/UPC barcode and want
-macros — much more precise than name search. Output includes a
+OFF is a free, community-maintained food database (~3.6 M products) covering
+many countries and languages. Use these tools when you have an EAN/UPC barcode
+and want macros — much more precise than name search. Output includes a
 `wger_ingredient_payload` field: a normalised per-100 g macro structure (kept
 for convenience / downstream use). Note that submitting custom ingredients to
 wger from the MCP is not supported — wger's REST `/ingredient/` is read-only,
 and the old web-form path was dropped with the move to multi-user auth.
+
+Localisation: OFF stores per-language fields (``product_name_<lang>``,
+``ingredients_text_<lang>``). Which one is requested and preferred comes from
+``DEFAULT_LANGUAGE`` (default ``en``), overridable per call via the tools'
+``language`` argument. The language-neutral ``product_name`` is the fallback.
 """
 
 from __future__ import annotations
@@ -17,24 +22,39 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from ..config import Settings
 from ..wger_client import WgerClient
 
 _OFF_BASE_URL = "https://world.openfoodfacts.org"
 _OFF_TIMEOUT = 15.0
 _BATCH_CONCURRENCY = 4  # OFF burst-limits aggressively; keep modest
 _RETRY_429_DELAY = 2.0  # seconds before single retry on rate-limit
-_FIELDS = ",".join([
+
+# Language-neutral fields, always requested.
+_BASE_FIELDS = (
     "code",
     "product_name",
-    "product_name_pl",
     "brands",
     "quantity",
     "countries_tags",
-    "ingredients_text_pl",
     "nutriscore_grade",
     "nova_group",
     "nutriments",
-])
+)
+# Per-language OFF field templates, filled with the resolved language code.
+_LOCALISED_FIELDS = ("product_name_{lang}", "ingredients_text_{lang}")
+
+
+def _fields_for(lang: str) -> str:
+    """The OFF ``fields=`` value for a given ISO 639-1 language code.
+
+    Requesting a language OFF has no data for is safe: the response is still
+    200 and simply omits the key, so no validation against a language list is
+    needed here. Note OFF often returns ``""`` rather than omitting a
+    per-language field — ``_shape`` treats both as absent.
+    """
+    localised = [tpl.format(lang=lang) for tpl in _LOCALISED_FIELDS]
+    return ",".join([*_BASE_FIELDS, *localised])
 
 
 def _f(nut: dict[str, Any], *keys: str) -> float | None:
@@ -50,9 +70,28 @@ def _f(nut: dict[str, Any], *keys: str) -> float | None:
     return None
 
 
-def _shape(prod: dict[str, Any]) -> dict[str, Any]:
-    """Flatten an OFF product into a wger-aware structure."""
+def _scalar(v: Any) -> Any | None:
+    """Normalise an OFF text field to a single value.
+
+    OFF occasionally returns a list where a string is expected; take the first
+    entry. Empty strings and empty lists collapse to ``None`` so callers can
+    treat "absent" and "blank" alike (OFF commonly returns ``""`` for a
+    language it has no data for).
+    """
+    if isinstance(v, list):
+        v = v[0] if v else None
+    return v or None
+
+
+def _shape(prod: dict[str, Any], lang: str) -> dict[str, Any]:
+    """Flatten an OFF product into a wger-aware structure.
+
+    ``lang`` selects which localised OFF fields are preferred; the
+    language-neutral ``product_name`` is the fallback.
+    """
     nut = prod.get("nutriments") or {}
+    name_key = f"product_name_{lang}"
+    ingredients_key = f"ingredients_text_{lang}"
 
     energy = _f(nut, "energy-kcal_100g", "energy-kcal")
     protein = _f(nut, "proteins_100g")
@@ -67,12 +106,10 @@ def _shape(prod: dict[str, Any]) -> dict[str, Any]:
     if sodium is None and salt is not None:
         sodium = round(salt / 2.5, 4)
 
-    name = prod.get("product_name_pl") or prod.get("product_name") or None
-    if isinstance(name, list):
-        name = name[0] if name else None
-    brand = prod.get("brands") or None
-    if isinstance(brand, list):
-        brand = brand[0] if brand else None
+    localized_name = _scalar(prod.get(name_key))
+    default_name = _scalar(prod.get("product_name"))
+    name = localized_name or default_name
+    brand = _scalar(prod.get("brands"))
 
     macros_per_100g = {
         "energy_kcal": energy,
@@ -114,12 +151,13 @@ def _shape(prod: dict[str, Any]) -> dict[str, Any]:
         "found": True,
         "code": prod.get("code"),
         "name": name,
-        "name_pl": prod.get("product_name_pl") or None,
-        "name_default": prod.get("product_name") or None,
+        "language": lang,
+        "name_localized": localized_name,
+        "name_default": default_name,
         "brand": brand,
         "quantity": prod.get("quantity"),
         "countries": prod.get("countries_tags"),
-        "ingredients_text_pl": prod.get("ingredients_text_pl") or None,
+        "ingredients_text": _scalar(prod.get(ingredients_key)),
         "nutriscore_grade": prod.get("nutriscore_grade"),
         "nova_group": prod.get("nova_group"),
         "macros_per_100g": macros_per_100g,
@@ -128,7 +166,7 @@ def _shape(prod: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def register(mcp: FastMCP, client: WgerClient) -> None:
+def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
     # One httpx client for OFF, lifetime-bound to the wger client via the
     # _extra_clients hook (closed in WgerClient.aclose).
     http = httpx.AsyncClient(
@@ -142,15 +180,22 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         client._extra_clients = extras  # type: ignore[attr-defined]
     extras.append(http)
 
+    default_language = settings.default_language
+
     @mcp.tool()
     async def lookup_food_by_barcode(
         barcode: Annotated[str, Field(min_length=4, max_length=32)],
+        language: Annotated[str | None, Field(pattern=r"^[a-z]{2}$")] = None,
     ) -> dict[str, Any]:
         """Look up an EAN/UPC/GTIN barcode on Open Food Facts.
 
         Returns macros per 100 g plus a ``wger_ingredient_payload`` (normalised
-        per-100 g macros, informational). Polish product name and ingredients
-        text are preferred when present.
+        per-100 g macros, informational).
+
+        ``language`` is an ISO 639-1 code ('en', 'pl', 'de', ...) selecting which
+        localised OFF name/ingredients fields are preferred; it defaults to the
+        server's ``DEFAULT_LANGUAGE``. The language-neutral ``product_name`` is
+        the fallback when no localised name exists.
 
         Salt vs sodium: OFF stores salt only; if sodium is missing we derive
         ``sodium = salt / 2.5`` (the standard conversion).
@@ -159,8 +204,11 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         the product to OFF. After acceptance there it'll sync into your wger
         instance on the next ingredient-sync run.
         """
+        lang = language or default_language
         try:
-            resp = await http.get(f"/api/v2/product/{barcode}.json", params={"fields": _FIELDS})
+            resp = await http.get(
+                f"/api/v2/product/{barcode}.json", params={"fields": _fields_for(lang)}
+            )
         except httpx.HTTPError as exc:
             return {"error": True, "status": 503, "detail": f"OFF unreachable: {exc}"}
         if resp.status_code >= 400:
@@ -180,14 +228,14 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
                     "— community-moderated, free. After acceptance it syncs into wger."
                 ),
             }
-        return _shape(data["product"])
+        return _shape(data["product"], lang)
 
-    async def _fetch_one(code: str) -> dict[str, Any]:
+    async def _fetch_one(code: str, lang: str) -> dict[str, Any]:
         """One barcode fetch with a single retry on 429 (rate limit)."""
         for attempt in (1, 2):
             try:
                 resp = await http.get(
-                    f"/api/v2/product/{code}.json", params={"fields": _FIELDS}
+                    f"/api/v2/product/{code}.json", params={"fields": _fields_for(lang)}
                 )
             except httpx.HTTPError as exc:
                 return {"error": True, "status": 503, "detail": str(exc)}
@@ -213,27 +261,32 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
                 return {"error": True, "status": 502, "detail": "non-JSON"}
             if data.get("status") != 1:
                 return {"found": False, "code": code}
-            return _shape(data["product"])
+            return _shape(data["product"], lang)
         return {"error": True, "status": 429, "detail": "still rate-limited after retry"}
 
     @mcp.tool()
     async def lookup_foods_by_barcodes(
         barcodes: list[str],
+        language: Annotated[str | None, Field(pattern=r"^[a-z]{2}$")] = None,
     ) -> dict[str, Any]:
         """Batch variant: look up many EANs at once. Returns a map keyed by
         barcode. Fetches happen concurrently (capped at 4 in flight) with a
-        one-shot retry on 429."""
+        one-shot retry on 429.
+
+        ``language`` works as in ``lookup_food_by_barcode`` and defaults to the
+        server's ``DEFAULT_LANGUAGE``."""
         if not barcodes:
             return {"results": {}}
         import asyncio
 
+        lang = language or default_language
         # Deduplicate while preserving order.
         unique = list(dict.fromkeys(barcodes))
         sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
 
         async def _one(code: str) -> tuple[str, dict[str, Any]]:
             async with sem:
-                return code, await _fetch_one(code)
+                return code, await _fetch_one(code, lang)
 
         results = dict(await asyncio.gather(*[_one(c) for c in unique]))
         return {"count": len(results), "results": results}

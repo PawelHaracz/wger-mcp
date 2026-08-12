@@ -47,7 +47,7 @@ def build_app(settings: Settings) -> Starlette:
     )
 
     client = WgerClient(settings.wger_api_root, build_token_provider(settings))
-    register_all(mcp, client)
+    register_all(mcp, client, settings)
 
     # AS facade: lets a client that treats this origin as the OAuth authorization
     # server (e.g. claude.ai) reach a private IdP. None when not in OIDC mode.

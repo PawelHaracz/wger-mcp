@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from ..config import Settings
 from ..wger_client import WgerClient, WgerError
 from .common import bad_request, err
 
@@ -27,18 +28,27 @@ def _shape_images(images: Any) -> list[dict[str, Any]]:
     return out
 
 
-def register(mcp: FastMCP, client: WgerClient) -> None:
+def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
+    default_language = settings.default_language
+
     @mcp.tool()
     async def search_exercises(
         query: Annotated[str, Field(min_length=2)],
-        language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] = "en",
+        language: Annotated[str | None, Field(pattern=r"^[a-z]{2}$")] = None,
         limit: Annotated[int, Field(ge=1, le=50)] = 10,
     ) -> list[dict[str, Any]]:
-        """Search the wger exercise database by name. Language is ISO 639-1 ('en','pl',...)."""
+        """Search the wger exercise database by name.
+
+        ``language`` is an ISO 639-1 code ('en', 'pl', 'de', ...); it defaults to
+        the server's ``DEFAULT_LANGUAGE``.
+        """
         try:
             results = await client.paginate(
                 "exerciseinfo/",
-                params={"name__search": query, "language__code": language},
+                params={
+                    "name__search": query,
+                    "language__code": language or default_language,
+                },
                 limit=limit,
             )
         except WgerError as exc:
@@ -82,7 +92,7 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
     @mcp.tool()
     async def search_ingredients(
         query: Annotated[str, Field(min_length=2)],
-        language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] = "en",
+        language: Annotated[str | None, Field(pattern=r"^[a-z]{2}$")] = None,
         limit: Annotated[int, Field(ge=1, le=50)] = 10,
         nutriscore: Annotated[str | None, Field(pattern=_NUTRISCORE)] = None,
         nutriscore_better_than: Annotated[str | None, Field(pattern=_NUTRISCORE)] = None,
@@ -94,11 +104,17 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         ``nutriscore`` exact grade; ``nutriscore_better_than='C'`` returns A/B
         only (strictly better); ``nutriscore_at_worst='C'`` returns A/B/C
         (C or better). Pass at most one of the three.
+
+        ``language`` is an ISO 639-1 code; it defaults to the server's
+        ``DEFAULT_LANGUAGE``.
         """
         chosen = [v for v in (nutriscore, nutriscore_better_than, nutriscore_at_worst) if v]
         if len(chosen) > 1:
             return [bad_request("pass at most one nutriscore filter")]
-        params: dict[str, Any] = {"name__search": query, "language__code": language}
+        params: dict[str, Any] = {
+            "name__search": query,
+            "language__code": language or default_language,
+        }
         if nutriscore:
             params["nutriscore"] = nutriscore.upper()
         elif nutriscore_better_than:
@@ -189,11 +205,15 @@ def register(mcp: FastMCP, client: WgerClient) -> None:
         equipment_id: str | None = None,
         muscle_id: str | None = None,
         category_id: str | None = None,
-        language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] = "en",
+        language: Annotated[str | None, Field(pattern=r"^[a-z]{2}$")] = None,
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> list[dict[str, Any]]:
-        """Find exercises by structured filters (e.g. Dumbbell + Back)."""
-        params: dict[str, Any] = {"language__code": language}
+        """Find exercises by structured filters (e.g. Dumbbell + Back).
+
+        ``language`` is an ISO 639-1 code; it defaults to the server's
+        ``DEFAULT_LANGUAGE``.
+        """
+        params: dict[str, Any] = {"language__code": language or default_language}
         if equipment_id is not None:
             params["equipment"] = equipment_id
         if muscle_id is not None:

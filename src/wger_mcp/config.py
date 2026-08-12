@@ -15,8 +15,14 @@ SSO identity provider (any OIDC IdP — Keycloak, Authentik, Auth0, Okta, …):
 Endpoints (JWKS, token) are resolved from the IdP's discovery document
 (``{issuer}/.well-known/openid-configuration``) unless overridden.
 
-``MCP_AUTH=none`` is a local-dev-only escape hatch: it skips SSO entirely and
-calls wger with a static ``WGER_DEV_TOKEN`` (a personal DRF API key).
+Two single-user strategies avoid the IdP entirely, both calling wger with a
+static ``WGER_DEV_TOKEN`` (a personal DRF API key):
+
+- ``MCP_AUTH=static_token`` — callers must present ``MCP_STATIC_TOKEN`` as a
+  bearer token. Inbound requests *are* authenticated, so this is safe to expose
+  over TLS; the secret grants full access to that one wger account.
+- ``MCP_AUTH=none`` — no inbound authentication at all. Anyone who can reach
+  ``/mcp`` acts as the account behind the dev token, so bind it to localhost.
 """
 
 from __future__ import annotations
@@ -27,9 +33,14 @@ from enum import StrEnum
 from pydantic import Field, HttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Minimum length for MCP_STATIC_TOKEN. 32 chars is roughly the shortest value
+# that is still awkward to brute-force; `openssl rand -hex 32` gives 64.
+MIN_STATIC_TOKEN_LENGTH = 32
+
 
 class AuthStrategy(StrEnum):
     oidc = "oidc"
+    static_token = "static_token"
     none = "none"
 
 
@@ -77,9 +88,12 @@ class Settings(BaseSettings):
     wger_allauth_provider: str = "openid_connect"
     wger_allauth_provider_token_path: str = "/allauth/app/v1/auth/provider/token"
 
-    # ---- local-dev escape hatch (MCP_AUTH=none) ----
+    # ---- single-user strategies (MCP_AUTH=static_token | none) ----
     # A personal wger DRF API key, sent as 'Authorization: Token <...>'.
     wger_dev_token: str | None = None
+    # Shared secret callers must present as a bearer token under
+    # MCP_AUTH=static_token. Unused by the other strategies.
+    mcp_static_token: str | None = None
 
     # ---------- transport ----------
     host: str = "0.0.0.0"
@@ -145,6 +159,24 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise ValueError("MCP_AUTH=oidc requires: " + ", ".join(missing))
+        elif self.mcp_auth is AuthStrategy.static_token:
+            missing = [
+                name
+                for name, val in (
+                    ("MCP_STATIC_TOKEN", self.mcp_static_token),
+                    ("WGER_DEV_TOKEN", self.wger_dev_token),
+                )
+                if not val
+            ]
+            if missing:
+                raise ValueError("MCP_AUTH=static_token requires: " + ", ".join(missing))
+            # The secret is the only thing standing between the network and full
+            # access to the wger account, so refuse trivially guessable values.
+            if len(str(self.mcp_static_token)) < MIN_STATIC_TOKEN_LENGTH:
+                raise ValueError(
+                    f"MCP_STATIC_TOKEN must be at least {MIN_STATIC_TOKEN_LENGTH} "
+                    "characters; generate one with: openssl rand -hex 32"
+                )
         elif self.mcp_auth is AuthStrategy.none and not self.wger_dev_token:
             raise ValueError("MCP_AUTH=none requires WGER_DEV_TOKEN (a wger DRF API key)")
         return self

@@ -10,6 +10,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from ..config import Settings
 from ..wger_client import WgerClient, WgerError
 from .common import bad_request, err
 
@@ -135,7 +136,7 @@ def _entry_reps(entry: dict[str, Any]) -> int:
     return int(_safe_float(raw))
 
 
-def register(mcp: FastMCP, client: WgerClient) -> None:
+def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
     @mcp.tool()
     async def weekly_summary(
         days: Annotated[int, Field(ge=1, le=90)] = 7,

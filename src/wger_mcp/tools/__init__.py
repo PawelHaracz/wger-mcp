@@ -1,13 +1,15 @@
 """MCP tool modules, grouped by domain.
 
-Each module exposes a ``register(mcp, client)`` function that attaches its
-tools to the given FastMCP instance. ``server.build_app`` calls them all.
+Each module exposes a ``register(mcp, client, settings)`` function that attaches
+its tools to the given FastMCP instance. ``server.build_app`` calls them all.
+Modules that need no configuration simply ignore ``settings``.
 """
 
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
+from ..config import Settings
 from ..wger_client import WgerClient
 from . import (
     analytics,
@@ -36,10 +38,10 @@ _REGISTRARS = (
 )
 
 
-def register_all(mcp: FastMCP, client: WgerClient) -> None:
+def register_all(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
     """Register every tool module on the given FastMCP instance."""
     for register in _REGISTRARS:
-        register(mcp, client)
+        register(mcp, client, settings)
 
 
 __all__ = ["register_all"]

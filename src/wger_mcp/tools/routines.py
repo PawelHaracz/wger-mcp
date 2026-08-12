@@ -9,6 +9,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from ..config import Settings
 from ..wger_client import WgerClient, WgerError
 from .common import bad_request, err
 
@@ -35,7 +36,7 @@ def _unknown_kind(kind: str) -> dict[str, Any]:
     )
 
 
-def register(mcp: FastMCP, client: WgerClient) -> None:
+def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
     @mcp.tool()
     async def list_routines(
         limit: Annotated[int, Field(ge=1, le=200)] = 20,

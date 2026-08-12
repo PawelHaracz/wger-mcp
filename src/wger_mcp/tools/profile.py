@@ -6,11 +6,12 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from ..config import Settings
 from ..wger_client import WgerClient, WgerError
 from .common import err
 
 
-def register(mcp: FastMCP, client: WgerClient) -> None:
+def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
     @mcp.tool()
     async def whoami() -> dict[str, Any]:
         """Return the wger user profile of the authenticated caller."""

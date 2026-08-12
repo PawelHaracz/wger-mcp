@@ -21,6 +21,7 @@ calls wger with a static ``WGER_DEV_TOKEN`` (a personal DRF API key).
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from pydantic import Field, HttpUrl, field_validator, model_validator
@@ -100,6 +101,14 @@ class Settings(BaseSettings):
     # DNS rebinding protection. Empty list disables the check.
     allowed_hosts: list[str] = Field(default_factory=list)
 
+    # ---------- localisation ----------
+    # Default ISO 639-1 language for content lookups. Used as the default for
+    # the exercise-search tools' ``language`` argument and to pick which
+    # localised Open Food Facts fields (``product_name_<lang>``,
+    # ``ingredients_text_<lang>``) are requested and preferred. Per-call
+    # arguments always win over this default.
+    default_language: str = "en"
+
     @field_validator("mcp_oidc_algorithms", mode="after")
     @classmethod
     def _normalize_algs(cls, v: list[str]) -> list[str]:
@@ -110,6 +119,16 @@ class Settings(BaseSettings):
     def _ensure_leading_slash(cls, v: str) -> str:
         v = v.strip()
         return v if v.startswith("/") else "/" + v
+
+    @field_validator("default_language", mode="after")
+    @classmethod
+    def _normalize_language(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.fullmatch(r"[a-z]{2}", v):
+            raise ValueError(
+                f"DEFAULT_LANGUAGE must be a two-letter ISO 639-1 code, got {v!r}"
+            )
+        return v
 
     @model_validator(mode="after")
     def _check_strategy_requirements(self) -> Settings:

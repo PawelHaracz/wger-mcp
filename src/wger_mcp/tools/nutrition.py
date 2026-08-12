@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, datetime, time
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -14,6 +14,30 @@ from ..wger_client import WgerClient, WgerError
 from .common import bad_request, err
 
 _INGREDIENT_CONCURRENCY = 8
+
+# Time of day used when a caller supplies a bare date for a diary entry. wger
+# stores diary entries as a full timestamp, so a date alone has to land
+# somewhere; noon keeps the entry on the intended day in either direction under
+# a timezone shift, which midnight would not.
+_BARE_DATE_TIME = time(12, 0)
+
+
+def _diary_timestamp(when: date | datetime | None) -> str | None:
+    """Normalise a diary ``when`` argument to what wger's ``datetime`` expects.
+
+    ``None`` returns ``None`` so the caller can omit the field entirely and let
+    wger apply its own ``timezone.now`` default. A ``datetime`` is preserved
+    exactly, including any timezone offset. A bare ``date`` is anchored at
+    :data:`_BARE_DATE_TIME`.
+
+    Note ``datetime`` is a subclass of ``date``, so the subclass is checked
+    first.
+    """
+    if when is None:
+        return None
+    if isinstance(when, datetime):
+        return when.isoformat()
+    return datetime.combine(when, _BARE_DATE_TIME).isoformat()
 
 
 def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
@@ -186,17 +210,67 @@ def register(mcp: FastMCP, client: WgerClient, settings: Settings) -> None:
         plan_id: str,
         ingredient_id: str,
         amount_g: Annotated[float, Field(gt=0, le=10000)],
-        when: date | None = None,
+        when: date | datetime | None = None,
+        meal_id: str | None = None,
     ) -> dict[str, Any]:
-        """Log eaten food against a plan (logitem)."""
-        payload = {
+        """Log eaten food against a plan (logitem).
+
+        ``when`` accepts either a full timestamp or a bare date:
+
+        - ``"2026-07-21T07:30:00+02:00"`` — logged at exactly that instant, the
+          offset preserved. Use this to record when a meal was actually eaten.
+        - ``"2026-07-21"`` — a date with no time, anchored at 12:00 local.
+        - omitted — wger timestamps the entry with the current time.
+
+        ``meal_id`` optionally attributes the entry to a specific meal of the
+        plan; omit it for a standalone diary entry.
+        """
+        payload: dict[str, Any] = {
             "plan": plan_id,
             "ingredient": ingredient_id,
             "amount": amount_g,
-            "datetime": f"{(when or date.today()).isoformat()}T12:00:00Z",
         }
+        # Only send 'datetime' when the caller asked for a specific time —
+        # otherwise let wger apply its own default rather than pinning the
+        # entry to an arbitrary hour.
+        stamp = _diary_timestamp(when)
+        if stamp is not None:
+            payload["datetime"] = stamp
+        if meal_id is not None:
+            payload["meal"] = meal_id
         try:
             return await client.post("nutritiondiary/", json=payload)
+        except WgerError as exc:
+            return err(exc)
+
+    @mcp.tool()
+    async def update_log_item(
+        log_item_id: str,
+        amount_g: Annotated[float | None, Field(gt=0, le=10000)] = None,
+        when: date | datetime | None = None,
+        ingredient_id: str | None = None,
+        meal_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Patch an existing nutrition-diary entry.
+
+        Use this to correct an entry's time or amount in place. ``when`` takes
+        the same forms as in ``log_ingredient``; only the fields you pass are
+        changed.
+        """
+        payload: dict[str, Any] = {}
+        if amount_g is not None:
+            payload["amount"] = amount_g
+        stamp = _diary_timestamp(when)
+        if stamp is not None:
+            payload["datetime"] = stamp
+        if ingredient_id is not None:
+            payload["ingredient"] = ingredient_id
+        if meal_id is not None:
+            payload["meal"] = meal_id
+        if not payload:
+            return bad_request("no fields to update")
+        try:
+            return await client.patch(f"nutritiondiary/{log_item_id}/", json=payload)
         except WgerError as exc:
             return err(exc)
 

@@ -1,33 +1,41 @@
-# Drop into your wger stack alongside web/nginx/oauth2-proxy.
-# Same approach as wger-compose.yml: macvlan + bridge nets, env_file on NAS.
+# Reference compose file — drop this service into your existing wger stack.
+#
+# The MCP server only needs to reach wger over HTTP, so put it on the same
+# network as your wger web container and point WGER_BASE_URL at it.
 services:
   wger-mcp:
     container_name: wger-mcp
-    build:
-      context: ./wger-mcp
-    pull_policy: build
+    # Use the published image...
+    image: ghcr.io/wger-project/mcp-server:latest
+    # ...or build from a local checkout instead:
+    # build:
+    #   context: .
     restart: unless-stopped
     env_file:
-      - /mnt/nas/app/wger-mcp/config/wger-mcp.env
+      # See .env.example for every supported variable.
+      - ./wger-mcp.env
     environment:
-      - TZ=Europe/Warsaw
+      - TZ=UTC
     networks:
-      wger_network:
-        ipv4_address: 192.168.100.50
-      internal-network:
-        ipv4_address: 172.16.2.21
-    # Optional: expose to LAN via macvlan. Otherwise reach via nginx upstream.
-    # If you front it with nginx, add a server block proxying to wger-mcp:8765.
-    # ports:
-    #   - "8765:8765"
+      - wger_network
+    # Expose directly only for local testing. In production terminate TLS at a
+    # reverse proxy and keep this port internal — the token grants access to
+    # wger accounts.
+    ports:
+      - "127.0.0.1:8765:8765"
 
-# Append to wger nginx config if you want to expose under
-# https://wger-mcp.private.miedziana.com :
+networks:
+  wger_network:
+    external: true
+
+# --- Reverse proxy -----------------------------------------------------------
+# Streamable HTTP uses chunked transfer and SSE-style responses, so buffering
+# must be off or clients will hang waiting for a response that never flushes.
 #
-#   upstream wger_mcp { server 192.168.100.50:8765; }
+#   upstream wger_mcp { server wger-mcp:8765; }
 #   server {
 #     listen 443 ssl http2;
-#     server_name wger-mcp.private.miedziana.com;
+#     server_name mcp.example.com;
 #     ssl_certificate     /etc/nginx/ssl/cert.pem;
 #     ssl_certificate_key /etc/nginx/ssl/cert.key;
 #     location / {
@@ -36,8 +44,11 @@ services:
 #       proxy_set_header Host $host;
 #       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 #       proxy_set_header X-Forwarded-Proto $scheme;
-#       # Streamable HTTP can use chunked transfer + SSE-style upgrades:
 #       proxy_buffering off;
+#       proxy_request_buffering off;
 #       proxy_read_timeout 3600s;
 #     }
 #   }
+#
+# With a proxy in front, set MCP_PUBLIC_URL=https://mcp.example.com so the
+# OAuth metadata advertises the public origin rather than the container's.

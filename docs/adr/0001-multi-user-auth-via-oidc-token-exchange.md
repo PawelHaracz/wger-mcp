@@ -1,6 +1,8 @@
 # Multi-user wger access via OIDC token-exchange
 
-**Status:** accepted (2026-06-18)
+**Status:** accepted (2026-06-18); partially amended by
+[0004](0004-static-token-strategy-for-single-user.md), which re-introduces a
+single-user strategy for deployments without an identity provider.
 
 ## Decision
 

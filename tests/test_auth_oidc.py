@@ -60,11 +60,11 @@ def test_oauth_metadata_derives_resource_from_forwarded_headers(
             "/.well-known/oauth-protected-resource",
             headers={
                 "X-Forwarded-Proto": "https",
-                "X-Forwarded-Host": "wger.private.miedziana.com",
+                "X-Forwarded-Host": "mcp.example.com",
             },
         )
         assert r.status_code == 200
-        assert r.json()["resource"] == "https://wger.private.miedziana.com"
+        assert r.json()["resource"] == "https://mcp.example.com"
 
 
 def test_www_authenticate_derives_metadata_from_forwarded_headers(
@@ -78,13 +78,13 @@ def test_www_authenticate_derives_metadata_from_forwarded_headers(
             json=_TOOLS_LIST,
             headers={
                 "X-Forwarded-Proto": "https",
-                "X-Forwarded-Host": "wger.private.miedziana.com",
+                "X-Forwarded-Host": "mcp.example.com",
             },
         )
         assert r.status_code == 401
         www = r.headers["www-authenticate"]
         assert (
-            'resource_metadata="https://wger.private.miedziana.com'
+            'resource_metadata="https://mcp.example.com'
             "/.well-known/oauth-protected-resource\"" in www
         )
 

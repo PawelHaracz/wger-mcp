@@ -65,9 +65,9 @@ These are written down because each one was found the hard way.
   note the OFF response keys changed once already (see the README's *Upgrading*
   section), and there is no compatibility shim.
 
-- **CI triggers on both `main` and `master`.** This repository used `main`; the
-  wger org uses `master`. The workflows list both so the migration does not
-  silently disable CI. Trim to one once settled.
+- **CI triggers on `master`**, matching this repository's default branch. It was
+  developed on a fork whose default branch was `main`, so if you see a stale
+  reference to `main` anywhere, that is why.
 
 ## Testing notes
 
